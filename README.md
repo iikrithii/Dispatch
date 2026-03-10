@@ -354,7 +354,7 @@ Your live URL will print at the end: `https://something.azurestaticapps.net`
 
 ---
 
-## Step 8.8 — Add CORS to Function App
+## Add CORS to Function App
 
 ```
 az functionapp cors add \
