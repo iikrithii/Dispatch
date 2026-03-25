@@ -1,11 +1,7 @@
 // src/components/ThreadCatchup.jsx
-//
-// api.js additions needed:
-//   export const getProjectsSummary = (threads) =>
-//     apiFetch("/projects-summary", { method: "POST", body: JSON.stringify({ threads }) });
 
 import React, { useState, useCallback } from "react";
-import { getInbox, getThreadCatchup, getProjectsSummary, getEvents } from "../services/api";
+import { getInbox, getThreadCatchup } from "../services/api";
 import { formatDistanceToNow, format } from "date-fns";
 
 // ─────────────────────────────────────────────
@@ -67,58 +63,23 @@ export default function ThreadCatchup() {
   const [threadMessages, setThreadMessages] = useState([]);
   const [catchup, setCatchup]               = useState(null);
   const [loadingCatchup, setLoadingCatchup] = useState(false);
-  const [events, setEvents]                 = useState([]);
-  const [projects, setProjects]             = useState([]);
-  const [loadingProjects, setLoadingProjects] = useState(false);
   const [expandedMsgs, setExpandedMsgs]     = useState(new Set());
   const [searchQuery, setSearchQuery]       = useState("");
   const [error, setError]                   = useState(null);
 
-  // ── Load inbox + trigger project analysis ──
+  // ── Load inbox ──
   const loadInbox = async () => {
     setLoadingInbox(true);
-    setLoadingProjects(true);
     setError(null);
-    setProjects([]);
     try {
-      const [r, eventsResult] = await Promise.all([
-        getInbox(30),
-        getEvents().catch(() => ({ events: [] })),
-      ]);
-      const threads = r.messages || [];
-      const upcomingEvents = (eventsResult.events || []).slice(0, 10).map((e) => ({
-        id: e.id,
-        subject: e.subject || "",
-        start: e.start?.dateTime || e.start || null,
-        attendees: (e.attendees || []).map((a) => a.emailAddress?.name || a.emailAddress?.address || "").filter(Boolean),
-      }));
-      setInbox(threads);
-      setEvents(upcomingEvents);
-
-      // Fire project analysis in parallel (non-blocking UI)
-      if (threads.length > 0) {
-        fetchProjects(threads, upcomingEvents);
-      } else {
-        setLoadingProjects(false);
-      }
+      const r = await getInbox(30);
+      setInbox(r.messages || []);
     } catch (e) {
       setError(e.message);
-      setLoadingProjects(false);
     } finally {
       setLoadingInbox(false);
     }
   };
-
-  const fetchProjects = useCallback(async (threads, upcomingEvents = []) => {
-    try {
-      const data = await getProjectsSummary(threads, upcomingEvents);
-      setProjects(data.projects || []);
-    } catch {
-      // Projects panel is non-critical — fail silently
-    } finally {
-      setLoadingProjects(false);
-    }
-  }, []);
 
   // ── Select a thread ──
   const handleSelectThread = useCallback(async (thread) => {
@@ -145,12 +106,6 @@ export default function ThreadCatchup() {
     }
   }, []);
 
-  // ── Select thread from project card ──
-  const handleSelectProject = useCallback((project) => {
-    const thread = inbox.find((t) => t.conversationId === project.threadId);
-    if (thread) handleSelectThread(thread);
-  }, [inbox, handleSelectThread]);
-
   const toggleMessage = (id) => {
     setExpandedMsgs((prev) => {
       const next = new Set(prev);
@@ -172,21 +127,11 @@ export default function ThreadCatchup() {
       <div className="page-header">
         <div className="page-title">Thread Catch-Up</div>
         <div className="page-subtitle">
-          Your inbox, clustered by project — click any thread for a 3-line catch-up.
+          Your inbox - click any thread for a 3-line catch-up.
         </div>
       </div>
 
       {error && <div className="error-state">⚠️ {error}</div>}
-
-      {/* ── Projects Panel ── */}
-      {(loadingProjects || projects.length > 0) && (
-        <ProjectsPanel
-          projects={projects}
-          loading={loadingProjects}
-          onSelect={handleSelectProject}
-          selectedThreadId={selectedThread?.conversationId}
-        />
-      )}
 
       {/* ── Main Grid ── */}
       <div className="content-grid">
@@ -284,139 +229,6 @@ export default function ThreadCatchup() {
           )}
         </div>
 
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// Projects Panel
-// ─────────────────────────────────────────────
-
-function ProjectsPanel({ projects, loading, onSelect, selectedThreadId }) {
-  return (
-    <div style={{ marginBottom: 20, padding: "0 28px" }}>
-      <div style={{
-        fontSize: 11,
-        fontWeight: 700,
-        color: "var(--text-tertiary)",
-        textTransform: "uppercase",
-        letterSpacing: "0.07em",
-        marginBottom: 10,
-      }}>
-        Active Projects
-      </div>
-
-      {loading ? (
-        <div style={{ display: "flex", gap: 12 }}>
-          {[1, 2, 3].map((i) => (
-            <div key={i} style={{
-              width: 260,
-              height: 110,
-              borderRadius: 10,
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              animation: "pulse 1.5s infinite",
-              flexShrink: 0,
-            }} />
-          ))}
-        </div>
-      ) : (
-        <div style={{
-          display: "flex",
-          gap: 12,
-          overflowX: "auto",
-          paddingBottom: 4,
-          scrollbarWidth: "none",
-          justifyContent: projects.length <= 3 ? "center" : "flex-start",
-        }}>
-          {projects.map((project, i) => (
-            <ProjectCard
-              key={i}
-              project={project}
-              active={selectedThreadId === project.threadId}
-              onClick={() => onSelect(project)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ProjectCard({ project, active, onClick }) {
-  const pm = PRIORITY_META[project.priority] || PRIORITY_META.medium;
-
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        flexShrink: 0,
-        width: 268,
-        padding: "14px 16px",
-        borderRadius: 12,
-        border: `1.5px solid ${active ? "var(--accent)" : "var(--border)"}`,
-        background: active ? "var(--accent-light)" : "var(--card)",
-        cursor: "pointer",
-        transition: "all 0.15s",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
-    >
-      {/* Name + priority */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)", lineHeight: 1.3 }}>
-          {project.name}
-        </div>
-        <span style={{
-          fontSize: 10,
-          fontWeight: 700,
-          padding: "2px 7px",
-          borderRadius: 10,
-          background: pm.bg,
-          color: pm.color,
-          whiteSpace: "nowrap",
-          flexShrink: 0,
-        }}>
-          {pm.label}
-        </span>
-      </div>
-
-      {/* Summary */}
-      <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-        {project.summary}
-      </div>
-
-      {/* Next meeting */}
-      {project.nextMeeting && (
-        <div style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 5,
-          fontSize: 11,
-          color: project.nextMeetingId ? "var(--accent)" : "var(--text-tertiary)",
-          fontWeight: 600,
-          background: project.nextMeetingId ? "var(--accent-light)" : "var(--bg)",
-          padding: "3px 8px",
-          borderRadius: 8,
-          alignSelf: "flex-start",
-          border: project.nextMeetingId ? "none" : "1px solid var(--border)",
-        }}>
-          📅 {project.nextMeeting}
-        </div>
-      )}
-
-      {/* Key task */}
-      <div style={{
-        fontSize: 11,
-        color: "var(--text-tertiary)",
-        fontStyle: "italic",
-        lineHeight: 1.4,
-        borderTop: "1px solid var(--border)",
-        paddingTop: 8,
-      }}>
-        ⚡ {project.keyTask}
       </div>
     </div>
   );

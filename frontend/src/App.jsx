@@ -8,6 +8,7 @@ import PostCallPanel from "./components/PostCallPanel";
 import ThreadCatchup from "./components/ThreadCatchup";
 import "./App.css";
 import dispatchLogo from "./assets/dispatch-logo.png";
+import ProjectsTab from "./components/ProjectsTab";
 
 // ─── NAV TABS ───────────────────────────────────────────
 const TABS = [
@@ -15,6 +16,7 @@ const TABS = [
   { id: "pre-call",  label: "Pre-Call Brief",  icon: "📅" },
   { id: "post-call", label: "Post-Call",       icon: "✅" },
   { id: "threads",   label: "Thread Catch-Up", icon: "📧" },
+  { id: "projects",  label: "Projects",        icon: "🗂" }
 ];
 
 // ─── SIGN-IN SCREEN ──────────────────────────────────────
@@ -119,6 +121,7 @@ function AppShell() {
         {activeTab === "pre-call"  && <PreCallBrief />}
         {activeTab === "post-call" && <PostCallPanel />}
         {activeTab === "threads"   && <ThreadCatchup />}
+        {activeTab === "projects"  && <ProjectsTab />}
       </main>
     </div>
   );

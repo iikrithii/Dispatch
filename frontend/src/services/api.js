@@ -25,6 +25,30 @@ async function authFetch(path, options = {}) {
 }
 
 // ─────────────────────────────────────────────
+// MEETING NOTES (Speaking Points)
+// ─────────────────────────────────────────────
+ 
+export const generateMeetingNotes = (payload) =>
+  authFetch("/meeting-notes", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+ 
+
+// ─── Projects Tab ──────────────────────────────────────────────────────────
+ 
+export const getProjectDetails = (threadId, projectName, nextMeetingId) => {
+  const params = new URLSearchParams();
+  if (threadId)     params.append("threadId",     threadId);
+  if (projectName)  params.append("projectName",  projectName);
+  if (nextMeetingId) params.append("nextMeetingId", nextMeetingId);
+  return authFetch(`/project-details?${params.toString()}`);
+};
+ 
+export const getUnresolvedIssues = (limit = 5) =>
+  authFetch(`/unresolved-issues?limit=${limit}`);
+ 
+// ─────────────────────────────────────────────
 // CALENDAR
 // ─────────────────────────────────────────────
 
