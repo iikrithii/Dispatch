@@ -101,3 +101,23 @@ export const approveItem = (batchId, itemId, action) =>
     method: "POST",
     body: JSON.stringify({ batchId, itemId, action }),
   });
+
+
+export async function getHandoverReport(threadId, projectName) {
+  const params = new URLSearchParams();
+  if (threadId)    params.set("threadId",    threadId);
+  if (projectName) params.set("projectName", projectName);
+
+  const token = await getAccessToken();
+  const res = await fetch(`${API_BASE}/handover-report?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `API error ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}

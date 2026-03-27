@@ -31,6 +31,8 @@ const NODE_CONFIG = [
   { id: "unresolved", label: "Unresolved", icon: "🔁", color: "#d97706"       },
 ];
 
+import { getHandoverReport } from "../services/api";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -314,7 +316,25 @@ function UnresolvedBanner({ issues, meetingCount, onChangeMeetingCount, onClickP
 function ProjectCard({ project, unresolvedIssues, onToggle }) {
   const p        = PRIORITY[project.priority] || PRIORITY.medium;
   const expanded = project._expanded;
-
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const handleHandover = async (e) => {
+    e.stopPropagation();
+    setGeneratingPdf(true);
+    try {
+      const objectUrl = await getHandoverReport(project.threadId, project.name);
+      const a = document.createElement("a");
+      a.href   = objectUrl;
+      a.target = "_blank";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+    } catch (err) {
+      console.error("Handover PDF error:", err);
+      alert("Could not generate handover report. Please try again.");
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+  
   return (
     <div style={{
       border: `1px solid ${expanded ? "var(--accent)" : "var(--border)"}`,
@@ -370,7 +390,35 @@ function ProjectCard({ project, unresolvedIssues, onToggle }) {
             transition: "background 0.15s, color 0.15s",
           }}>
             {project._loading ? "Loading…" : expanded ? "▾ Collapse" : "▸ Explore"}
+
+            
           </div>
+
+          <button
+  onClick={handleHandover}
+  disabled={generatingPdf}
+  style={{
+    fontSize: 12, fontWeight: 600,
+    padding: "6px 14px", borderRadius: 8,
+    background: "transparent",
+    border: "1px solid var(--border)",
+    color: "var(--text-secondary)",
+    cursor: generatingPdf ? "wait" : "pointer",
+    flexShrink: 0, whiteSpace: "nowrap",
+    display: "flex", alignItems: "center", gap: 5,
+    transition: "border-color 0.15s, color 0.15s",
+  }}
+  onMouseEnter={(e) => {
+    e.currentTarget.style.borderColor = "var(--accent)";
+    e.currentTarget.style.color = "var(--accent)";
+  }}
+  onMouseLeave={(e) => {
+    e.currentTarget.style.borderColor = "var(--border)";
+    e.currentTarget.style.color = "var(--text-secondary)";
+  }}
+>
+  {generatingPdf ? "⏳ Generating…" : "📄 Handover"}
+</button>
         </div>
       </div>
 
