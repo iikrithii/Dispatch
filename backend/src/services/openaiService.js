@@ -104,7 +104,7 @@ Return valid JSON matching EXACTLY this schema — nothing else, no markdown, no
 }
 
 "meetingTitle": Subject of the upcoming meeting.
-"currentStatus": Exactly 2 sentences. Where does the project/work stand right now? Do NOT mention the upcoming meeting. Use Jira execution context if provided.
+"currentStatus": Exactly 2 sentences. Where does the project/work stand right now? Do NOT mention the upcoming meeting. Do not mention number of jira tasks and stuff, you can mention the content from the task, highlight whatever is completed and pending from email and threads.
 "followUps": null if no past meeting. Otherwise populate all fields.
   "narrative": 3-5 sentences on what happened IN the meeting.
   "conversationStory": 4-8 sentences reconstructing email back-and-forth AFTER the meeting.
@@ -112,7 +112,7 @@ Return valid JSON matching EXACTLY this schema — nothing else, no markdown, no
   "nextMeetingPoints": Things planned for the NEXT meeting. Max 4.
 "openPoints": Max 3 unresolved blockers. If Jira blockers are provided, prefer those. Avoid duplicating discussionItems.
 "agendaForToday": Max 4 concrete things to decide/accomplish. Use Jira discussion points if provided.
-"keyContext": 1-2 sentences of critical background.`;
+"keyContext": 1-2 sentences of critical background. Don't use Jira tasks, rathed use the context of the project, from all the information`;
 
   const jiraBlock = jiraExecutionContext
     ? `━━━ JIRA EXECUTION CONTEXT ━━━
@@ -483,6 +483,87 @@ Action items:\n${actionSummary}`;
   return complete(systemPrompt, `Analyse these ${meetingRecords.length} meeting records for recurring unresolved issues:\n\n${meetingList}\n\nReturn JSON now.`, 0.2);
 }
 
+
+// ─────────────────────────────────────────────
+// HANDOVER REPORT (Projects tab)
+// Synthesises all project data into structured narrative for PDF.
+// ─────────────────────────────────────────────
+
+async function generateHandoverReport({ projectName, meetings, pendingTasks, attendees, emailThreads }) {
+  const systemPrompt = `You are Dispatch, an AI project analyst.
+Synthesise the provided project data into a structured handover document for a new team member.
+Return valid JSON only — no markdown, no commentary:
+{
+  "oneLiner": string,
+  "overview": string,
+  "currentStatus": string,
+  "meetingHistory": [
+    {
+      "subject": string,
+      "date": string | null,
+      "summary": string,
+      "decisions": string[]
+    }
+  ],
+  "openActionItems": [
+    { "task": string, "owner": string, "status": "pending" | "done" }
+  ],
+  "keyPeople": [
+    { "name": string, "email": string | null, "role": string | null }
+  ],
+  "emailContext": [
+    { "subject": string, "summary": string }
+  ],
+  "dayOneChecklist": string[]
+}
+
+FIELD RULES:
+"oneLiner": Single sentence — what this project is and why it matters.
+"overview": 3–5 sentences. What is this project? What problem does it solve? Where did it start?
+"currentStatus": 1–2 sentences — where things stand RIGHT NOW.
+"meetingHistory": All meetings, oldest first. Max 2 decisions per meeting. Keep summaries to 2 sentences.
+"openActionItems": All pending tasks plus any incomplete action items from meetings. Deduplicate.
+"keyPeople": Every unique person across meetings and attendees. Infer role from context (e.g. "Technical Lead", "Project Sponsor"). null if unclear.
+"emailContext": One entry per email thread. Summary = 1–2 sentences on what the thread is about.
+"dayOneChecklist": 4–6 specific, concrete things the new person should do first. Actionable imperatives.`;
+
+  const meetingList = meetings.map((m, i) => `
+MEETING ${i + 1}: ${m.subject || "(untitled)"}
+Date: ${m.startTime || m.savedAt || "unknown"}
+Summary: ${(m.summary || "none").slice(0, 400)}
+Action items:
+${(m.actionItems || []).map((a) => `  - [${a.status || "pending"}] ${a.owner}: ${a.task}`).join("\n") || "  none"}`).join("\n");
+
+  const taskList = pendingTasks.slice(0, 20).map((t) =>
+    `- ${t.label || t.data?.subject || "(task)"} | owner: ${t.data?.owner || "unknown"}`
+  ).join("\n") || "none";
+
+  const peopleList = attendees.map((a) =>
+    `- ${a.name || a.email} <${a.email || "no email"}>${a.taskCount > 0 ? ` (${a.taskCount} tasks)` : ""}`
+  ).join("\n") || "none";
+
+  const threadList = emailThreads.map((t) =>
+    `- Subject: "${t.subject}" | ID: ${t.conversationId}`
+  ).join("\n") || "none";
+
+  return complete(systemPrompt, `
+PROJECT: "${projectName}"
+
+MEETINGS (${meetings.length}):
+${meetingList || "none"}
+
+PENDING TASKS:
+${taskList}
+
+PEOPLE:
+${peopleList}
+
+EMAIL THREADS:
+${threadList}
+
+Generate the handover report JSON now.`, 0.2);
+}
+
 module.exports = {
   generatePreCallBrief,
   processPostCall,
@@ -492,4 +573,5 @@ module.exports = {
   generateNudge,
   generateSpeakingPoints,
   detectUnresolvedIssues,
+  generateHandoverReport,
 };

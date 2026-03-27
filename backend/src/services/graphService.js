@@ -1,7 +1,8 @@
 // services/graphService.js
 // All Microsoft Graph API calls live here.
 // Change from Jira branch: getEmailsFromAttendees now fetches toRecipients + ccRecipients
-// and raises the fetch limit to 50, enabling user-sent email detection in preMeetingBrief.
+// and raises the fetch limit substantially so preMeetingBrief can still find the
+// right thread in a busy mailbox.
 
 const fetch = require("node-fetch");
 
@@ -74,14 +75,14 @@ async function getEvent(accessToken, eventId) {
 /**
  * Fetch recent messages.
  * CHANGED: now selects toRecipients + ccRecipients (needed for user-sent email detection)
- * and raises limit to 50 so the pre-call brief has enough signal.
+ * and raises the fetch limit so the pre-call brief has enough signal in a busy mailbox.
  */
 async function getEmailsFromAttendees(accessToken, attendeeEmails, limit = 30) {
   if (!attendeeEmails || attendeeEmails.length === 0) return { value: [] };
   return graphGet(accessToken, "/me/messages", {
     $select:  "id,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime,conversationId",
     $orderby: "receivedDateTime desc",
-    $top:     String(Math.min(limit, 50)),
+    $top:     String(Math.min(limit, 200)),
   });
 }
 

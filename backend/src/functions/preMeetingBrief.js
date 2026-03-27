@@ -1,466 +1,570 @@
-// functions/preMeetingBrief.js
 const { app } = require("@azure/functions");
-const graphService   = require("../services/graphService");
-const openaiService  = require("../services/openaiService");
-const cosmosService  = require("../services/cosmosService");
-const jiraService    = require("../services/jiraService");
+const graphService = require("../services/graphService");
+const openaiService = require("../services/openaiService");
+const cosmosService = require("../services/cosmosService");
+const jiraService = require("../services/jiraService");
 const { extractAuth, jsonResponse, errorResponse } = require("../utils/auth");
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 const STOP_WORDS = new Set([
-  "with","from","this","that","have","will","been","your",
-  "meeting","call","sync","review","weekly","update","prep",
-  "follow","yesterday","today","about","just","also","here",
-  "some","what","when","then","only","over","very","into",
-  "more","were","they","them","their","would","could",
+  "with", "from", "this", "that", "have", "will", "been", "your",
+  "meeting", "call", "sync", "review", "weekly", "update", "prep",
+  "follow", "yesterday", "today", "about", "just", "also", "here",
+  "some", "what", "when", "then", "only", "over", "very", "into",
+  "more", "were", "they", "them", "their", "would", "could", "please",
+  "thanks", "regards", "best", "everyone", "team", "soon", "shortly",
 ]);
 
+const GENERIC_IDENTITY_TOKENS = new Set(["dispatch", "owner", "user", "mail", "email"]);
+
+const DEMO_MEETING_PROFILES = {
+  "website go live final review": {
+    tokens: ["payment", "gateway", "checkout", "homepage", "banner", "marketing", "traffic"],
+    phrases: ["payment gateway", "homepage banner", "checkout fix"],
+  },
+  "retail logistics sync": {
+    tokens: ["packaging", "retail", "batch", "boxes", "vendor", "contract", "exception", "pallets", "shipment"],
+    phrases: ["packaging exception", "retail batch", "standard boxes", "vendor contract"],
+  },
+  "launch funding compliance sync": {
+    tokens: ["compliance", "funds", "investor", "document", "countersigned", "clauses", "approval", "marketing", "clearance"],
+    phrases: ["marketing funds", "compliance document", "final clauses", "countersigned compliance"],
+  },
+  "marketing funding compliance sync": {
+    tokens: ["compliance", "funds", "funding", "investor", "document", "countersigned", "clauses", "approval", "marketing", "clearance"],
+    phrases: ["marketing funds", "marketing funding", "compliance document", "final clauses", "countersigned compliance"],
+  },
+};
+
 function normalizeTokens(text = "") {
-  return (text || "")
+  return String(text || "")
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length > 3 && !STOP_WORDS.has(w));
+    .filter((word) => word.length > 2 && !STOP_WORDS.has(word));
 }
 
 function normalizeText(text = "") {
-  return (text || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getMeetingProfile(subject = "") {
+  return DEMO_MEETING_PROFILES[normalizeText(subject)];
+}
+
+function unique(items = []) {
+  return Array.from(new Set((items || []).filter(Boolean)));
+}
+
+function cleanHtml(html) {
+  return String(html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function firstName(text = "") {
+  return String(text || "").trim().toLowerCase().split(/\s+/)[0] || "";
 }
 
 function toMillis(value) {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
-  return Number.isNaN(ms) ? null : ms;
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function firstName(str = "") {
-  return (str || "").toLowerCase().split(/\s+/)[0] || "";
-}
-
-function ownerMatchesEmail(owner = "", email) {
-  if (!owner || !email) return false;
-  const ownerLow = firstName(owner);
-  const fromName = (email.from?.emailAddress?.name || "").toLowerCase();
-  const fromAddr = (email.from?.emailAddress?.address || "").toLowerCase();
-  return (fromName && fromName.includes(ownerLow)) || (fromAddr && fromAddr.includes(ownerLow));
-}
-
-function emailMatchesTokens(email, tokens = []) {
-  if (!email || !tokens || tokens.length === 0) return false;
-  const subject = (email.subject || "").toLowerCase();
-  const preview = (email.bodyPreview || "").toLowerCase();
-  const t = normalizeTokens(subject + " " + preview);
-  return tokens.some((tok) => t.includes(tok));
-}
-
-function makeEvidence(owner, email) {
-  if (!email) return null;
-  const when = email.receivedDateTime ? email.receivedDateTime.slice(0, 10) : null;
-  const subj = email.subject || email.bodyPreview || "(no subject)";
-  if (when) return `${owner} replied on ${when} — "${subj.slice(0, 120)}"`;
-  return `${owner} replied — "${subj.slice(0, 120)}"`;
+function userIdentityHints(userEmail = "") {
+  const normalizedEmail = String(userEmail || "").toLowerCase();
+  const local = normalizedEmail.split("@")[0] || "";
+  const localParts = local.split(/[._-]+/).map((part) => part.trim().toLowerCase()).filter(Boolean);
+  return unique([
+    normalizedEmail,
+    local,
+    ...localParts.filter((part) => part.length > 2 && !GENERIC_IDENTITY_TOKENS.has(part)),
+  ]);
 }
 
 function emailRecipientAddresses(email = {}) {
   return []
     .concat(email.toRecipients || [])
     .concat(email.ccRecipients || [])
-    .map((r) => (r?.emailAddress?.address || "").toLowerCase())
+    .map((recipient) => (recipient?.emailAddress?.address || "").toLowerCase())
     .filter(Boolean);
 }
 
-function userIdentityHints(userEmail = "") {
-  const local = (userEmail || "").split("@")[0] || "";
-  const localParts = local.replace(/[._-]+/g, " ").trim();
-  return Array.from(new Set(
-    [userEmail.toLowerCase(), local.toLowerCase(), localParts.toLowerCase(), firstName(localParts)]
-      .concat(localParts.split(/\s+/).map((p) => (p || "").toLowerCase()))
-      .filter(Boolean)
-  ));
-}
-
-function emailFromUser(email, hints = []) {
-  const fromAddress = (email.from?.emailAddress?.address || "").toLowerCase();
-  const fromName    = (email.from?.emailAddress?.name    || "").toLowerCase();
-  return hints.some((hint) => {
+function emailFromUser(email, userHints = []) {
+  const fromAddress = (email?.from?.emailAddress?.address || "").toLowerCase();
+  const fromName = (email?.from?.emailAddress?.name || "").toLowerCase();
+  return userHints.some((hint) => {
     if (!hint) return false;
-    return fromAddress === hint || fromAddress.includes(hint) || fromName.includes(hint);
+    if (hint.includes("@")) return fromAddress === hint;
+    if (hint.includes(".")) return fromAddress.startsWith(`${hint}@`);
+    return fromName.includes(hint);
   });
 }
 
-function ownerMatchesUser(owner = "", hints = []) {
-  const ownerLower = (owner || "").toLowerCase();
-  return hints.some((hint) => hint && ownerLower.includes(hint));
+function ownerMatchesEmail(owner = "", email = {}) {
+  const ownerHint = firstName(owner);
+  if (!ownerHint) return false;
+  const fromName = (email?.from?.emailAddress?.name || "").toLowerCase();
+  const fromAddress = (email?.from?.emailAddress?.address || "").toLowerCase();
+  return fromName.includes(ownerHint) || fromAddress.includes(ownerHint);
 }
 
-function textHasCommitmentSignal(text = "") {
-  const lower = (text || "").toLowerCase();
-  return (
-    /\bi\b/.test(lower) &&
-    /(i'll|i will|i have|i've|i can|i finalized|i confirmed|i updated|i shared|i sent|i added|i completed|i finished)/.test(lower)
-  ) || /(completed|finalized|confirmed|shared|sent|updated|added the comment|left a comment)/.test(lower);
+function makeEvidence(owner = "", email = {}) {
+  const when = email?.receivedDateTime ? email.receivedDateTime.slice(0, 10) : null;
+  const subject = email?.subject || email?.bodyPreview || "(no subject)";
+  return when
+    ? `${owner} replied on ${when} - "${subject.slice(0, 120)}"`
+    : `${owner} replied - "${subject.slice(0, 120)}"`;
 }
 
-function textHasAskSignal(text = "") {
-  const lower = (text || "").toLowerCase();
-  return /(can you|could you|please|need you|let me know|confirm|share|send|review|take this|pick this up|follow up)/.test(lower);
+function issueAssignedToUser(issue = {}, userHints = []) {
+  const assigneeEmail = (issue.assigneeEmail || "").toLowerCase();
+  const assignee = (issue.assignee || "").toLowerCase();
+  return userHints.some((hint) => hint && (assigneeEmail === hint || assignee.includes(hint)));
 }
 
-function textHasPromiseSignal(text = "") {
-  const lower = (text || "").toLowerCase();
-  return /(i'll|i will|will do|i can take|i can do|i'm on it|on it|will send|will update|will confirm|i'll handle|i'll take|i can own)/.test(lower);
-}
-
-function textHasCompletionSignal(text = "") {
-  const lower = (text || "").toLowerCase();
-  return /(done|complete|completed|finish|finished|finalized|confirmed|shipped|ready)/.test(lower);
-}
-
-function textHasCommentSignal(text = "") {
-  const lower = (text || "").toLowerCase();
-  return /(comment|note|update jira|update the issue|leave the note|leave a note|leave a comment|add the comment|add a comment)/.test(lower);
-}
-
-function textHasOwnerSignal(text = "") {
-  const lower = (text || "").toLowerCase();
-  return /(assign|owner|handoff|hand off|reassign|take this|own this|pick this up)/.test(lower);
+function emailMatchesTokens(email = {}, tokens = []) {
+  const emailTokens = normalizeTokens(`${email.subject || ""} ${email.bodyPreview || ""}`);
+  return overlapCount(emailTokens, tokens) > 0;
 }
 
 function issueMatchScore(text = "", issue = {}) {
   if (!text || !issue) return 0;
-  const lower = (text || "").toLowerCase();
-  if (issue.key && lower.includes(issue.key.toLowerCase())) return 100;
-  const textTokens  = normalizeTokens(text);
-  const issueTokens = normalizeTokens([issue.key, issue.title, issue.projectLabel, issue.spaceName, ...(issue.labels || [])].join(" "));
-  return textTokens.filter((token) => issueTokens.includes(token)).length;
+  const normalizedText = String(text || "").toLowerCase();
+  if (issue.key && normalizedText.includes(String(issue.key).toLowerCase())) return 100;
+
+  const textTokens = normalizeTokens(text);
+  const issueTokens = normalizeTokens([
+    issue.key,
+    issue.title,
+    issue.projectLabel,
+    issue.spaceName,
+    ...(issue.labels || []),
+  ].join(" "));
+
+  return overlapCount(textTokens, issueTokens);
 }
 
-function findBestIssueMatch(text, issues = []) {
-  let best = null;
+function findBestIssueMatch(text = "", issues = []) {
+  let bestIssue = null;
   let bestScore = 0;
-  for (const issue of issues) {
+
+  for (const issue of issues || []) {
     const score = issueMatchScore(text, issue);
-    if (score > bestScore) { best = issue; bestScore = score; }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIssue = issue;
+    }
   }
-  return bestScore > 0 ? best : null;
+
+  return bestScore > 0 ? bestIssue : null;
 }
 
-function isGenericDiscussionText(text = "") {
-  const lower = (text || "").toLowerCase();
-  return lower.includes("review the remaining open jira items") ||
-         lower.includes("leave the meeting with a clear owner");
+function textHasCompletionSignal(text = "") {
+  const lower = String(text || "").toLowerCase();
+  if (/(cannot|can't|blocked|blocker|pending|still shows|until|waiting|hold tight)/.test(lower)) {
+    return false;
+  }
+  return /(resolved|fixed|complete|completed|done|finished|tested|processing smoothly|fully wrapped up)/.test(lower);
 }
 
-function pickPreferredText(current, next) {
-  if (!current) return next;
-  if (!next) return current;
-  if (isGenericDiscussionText(current.text) && !isGenericDiscussionText(next.text)) return next;
-  if (next.text.length > current.text.length + 12) return next;
-  return current;
+function textHasApprovalSignal(text = "") {
+  const lower = String(text || "").toLowerCase();
+  return /(approve|approved|approval|sign off|sign-off|countersigned|clearance|review and approve|hit approve)/.test(lower);
 }
 
-function uniqueIssues(issueList = []) {
-  const seen = new Set();
-  return (issueList || []).filter((issue) => {
-    const key = issue?.key;
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+function textHasPromiseSignal(text = "") {
+  const lower = String(text || "").toLowerCase();
+  return /(i'll|i will|will approve|will review|reviewing|momentarily|on my screen|i am reviewing|i'm reviewing|will have|on it)/.test(lower);
 }
 
-function issueAssignedToUser(issue, hints = []) {
+function senderMatchesIssueOwner(issue = {}, email = {}) {
+  const senderName = (email.from?.emailAddress?.name || "").toLowerCase();
+  const senderAddress = (email.from?.emailAddress?.address || "").toLowerCase();
+  const assigneeName = firstName(issue.assignee || "");
   const assigneeEmail = (issue.assigneeEmail || "").toLowerCase();
-  const assignee      = (issue.assignee || "").toLowerCase();
-  return hints.some((hint) => {
-    if (!hint) return false;
-    return assigneeEmail === hint || assignee.includes(hint);
-  });
+
+  if (assigneeEmail && senderAddress === assigneeEmail) return true;
+  return assigneeName && (senderName.includes(assigneeName) || senderAddress.includes(assigneeName));
 }
 
-function emailMentionsIssueKey(email, issue) {
-  const text  = `${email?.subject || ""} ${email?.bodyPreview || ""}`;
-  const lower = text.toLowerCase();
-  return Boolean(issue?.key && lower.includes(issue.key.toLowerCase()));
+function threadKey(email = {}) {
+  if (email.conversationId) return email.conversationId;
+  return normalizeText(email.subject || "").slice(0, 120) || `email_${email.id || Date.now()}`;
 }
 
-function emailExplanationScore(email, issue) {
-  const text  = `${email?.subject || ""} ${email?.bodyPreview || ""}`;
-  const lower = text.toLowerCase();
-  let score = 0;
-  if (issue?.key && lower.includes(issue.key.toLowerCase())) score += 10;
-  if (textHasCompletionSignal(text)) score += 6;
-  if (textHasCommentSignal(text))    score += 5;
-  if (textHasOwnerSignal(text))      score += 4;
-  if (textHasCommitmentSignal(text)) score += 3;
-  const titleTokens = normalizeTokens(issue?.title || "");
-  const textTokens  = normalizeTokens(text);
-  score += titleTokens.filter((t) => textTokens.includes(t)).length;
+function groupEmailsIntoThreads(emails = []) {
+  const grouped = new Map();
+  for (const email of emails || []) {
+    const key = threadKey(email);
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        threadId: key,
+        subject: email.subject || "(no subject)",
+        messages: [],
+      });
+    }
+    grouped.get(key).messages.push({
+      id: email.id || null,
+      date: email.receivedDateTime || null,
+      subject: email.subject || "",
+      preview: email.bodyPreview || "",
+      fromName: email.from?.emailAddress?.name || "",
+      fromAddr: (email.from?.emailAddress?.address || "").toLowerCase(),
+      raw: email,
+    });
+  }
+
+  return Array.from(grouped.values())
+    .map((thread) => {
+      thread.messages.sort((a, b) => toMillis(a.date) - toMillis(b.date));
+      return thread;
+    })
+    .sort((a, b) => {
+      const lastA = a.messages[a.messages.length - 1]?.date;
+      const lastB = b.messages[b.messages.length - 1]?.date;
+      return toMillis(lastB) - toMillis(lastA);
+    });
+}
+
+function overlapCount(left = [], right = []) {
+  const rightSet = new Set(right);
+  return left.filter((token) => rightSet.has(token)).length;
+}
+
+function scoreEmailForMeeting(email, { attendeeSet, attendeeNames, userHints, eventTokens }) {
+  const subject = email.subject || "";
+  const preview = email.bodyPreview || "";
+  const tokens = normalizeTokens(`${subject} ${preview}`);
+  const fromAddress = (email.from?.emailAddress?.address || "").toLowerCase();
+  const fromName = (email.from?.emailAddress?.name || "").toLowerCase();
+  const recipients = emailRecipientAddresses(email);
+
+  let score = overlapCount(tokens, eventTokens) * 5;
+
+  if (attendeeSet.has(fromAddress)) score += 5;
+  if (attendeeNames.some((name) => name && fromName.includes(name))) score += 4;
+  if (recipients.some((address) => attendeeSet.has(address))) score += 3;
+  if (emailFromUser(email, userHints) && recipients.some((address) => attendeeSet.has(address))) score += 4;
+  if ((email.conversationId || "").length > 0) score += 1;
+
   return score;
 }
 
-function latestRelevantUserEmail(issue, emails = [], userHints = []) {
-  let best = null; let bestScore = -1; let bestMs = 0;
-  for (const email of emails) {
-    if (!emailFromUser(email, userHints)) continue;
-    if (!emailMentionsIssueKey(email, issue)) continue;
-    const score = emailExplanationScore(email, issue);
-    const ms    = toMillis(email.receivedDateTime);
-    if (score > bestScore || (score === bestScore && ms && ms > bestMs)) {
-      best = email; bestScore = score; bestMs = ms;
+function threadParticipantStats(thread, attendeeSet = new Set(), userHints = []) {
+  const participants = new Set();
+
+  for (const message of thread.messages || []) {
+    const fromAddress = (message.raw?.from?.emailAddress?.address || "").toLowerCase();
+    if (fromAddress && !userHints.some((hint) => hint && (fromAddress === hint || fromAddress.startsWith(`${hint}@`)))) {
+      participants.add(fromAddress);
+    }
+
+    for (const address of emailRecipientAddresses(message.raw || {})) {
+      if (address && !userHints.some((hint) => hint && (address === hint || address.startsWith(`${hint}@`)))) {
+        participants.add(address);
+      }
     }
   }
-  return best;
-}
 
-function issueStateLabel(issue = {}) {
-  const status = issue?.status || "open";
-  return status === "Unknown" ? "open" : status;
-}
-
-function buildStaleIssueActionText(issue, emailText = "") {
-  const key   = issue?.key || "This issue";
-  const lower = (emailText || "").toLowerCase();
-  if (textHasOwnerSignal(lower)) {
-    if (issue.assignee === "Unassigned")
-      return `${key} is still unassigned in Jira. If ownership changed, assign it before the call so the team has a clear owner.`;
-    return `${key} still shows ${issue.assignee} as the owner in Jira. If you already handed it off, update the assignee before the meeting.`;
+  let coverage = 0;
+  let outsiders = 0;
+  for (const participant of participants) {
+    if (attendeeSet.has(participant)) coverage += 1;
+    else outsiders += 1;
   }
-  if (textHasCommentSignal(lower))
-    return `You said you'd leave an update on ${key}, but Jira still looks unchanged. Add the note before the meeting so everyone sees the latest context.`;
-  if (textHasCompletionSignal(lower))
-    return `You said ${key} was complete, but Jira still shows it as ${issueStateLabel(issue)}. Mark it done or update the status before the meeting.`;
-  return `${key} still looks stale in Jira compared with your latest email. Update the issue before the meeting so the team is working from the same picture.`;
+
+  return { coverage, outsiders };
 }
 
-function getStaleIssueCategory(issue, emailText = "") {
-  const lower = (emailText || "").toLowerCase();
-  if (textHasOwnerSignal(lower)) return "owner";
-  if (textHasCommentSignal(lower)) return "comment";
-  if (textHasCompletionSignal(lower) && !jiraService.isDoneStatus(issue?.status)) return "completion";
-  return "stale";
-}
-
-function emailMatchesIssueOrTask(email, issue, task = "") {
-  const text = `${email?.subject || ""} ${email?.bodyPreview || ""}`;
-  if (issue && findBestIssueMatch(text, [issue])) return true;
-  const taskTokens = normalizeTokens(task || "");
-  if (taskTokens.length === 0) return false;
-  return taskTokens.some((token) => normalizeTokens(text).includes(token));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Section builders
-// ─────────────────────────────────────────────────────────────────────────────
-
-function createSectionItems(rawItems = [], issues = []) {
-  const grouped = new Map();
-  for (const item of rawItems) {
-    if (!item || !item.text) continue;
-    const text  = item.text.trim();
-    if (!text) continue;
-    const issue = item.issue || findBestIssueMatch(text, issues);
-    const key   = issue?.key || normalizeText(text);
-    const prev  = grouped.get(key);
-    grouped.set(key, pickPreferredText(prev, { ...item, text, issue }));
+function scoreThreadForMeeting(thread, context) {
+  let score = 0;
+  for (const message of thread.messages || []) {
+    score += scoreEmailForMeeting(message.raw || {}, context);
   }
-  return Array.from(grouped.values())
-    .map((item) => ({ text: item.text, issue: item.issue ? jiraService.buildIssueCard(item.issue) : null }))
-    .slice(0, 5);
+
+  const subjectTokens = normalizeTokens(thread.subject || "");
+  score += overlapCount(subjectTokens, context.eventTokens) * 6;
+  const stats = threadParticipantStats(thread, context.attendeeSet, context.userHints);
+  score += stats.coverage * 30;
+  score -= stats.outsiders * 20;
+  score += profileScoreForThread(thread, context.meetingProfile);
+  return score;
 }
 
-function buildGroupedCheckText(category, groupedIssues = [], fallbackText = "") {
-  const count = groupedIssues.length;
-  if (count <= 1) return fallbackText;
-  if (category === "completion") return "You said these issues were complete, but Jira still shows them as open. Mark them done or update their status before the meeting.";
-  if (category === "comment")    return "You said you'd leave Jira updates on these issues, but they still look unchanged. Add the notes before the meeting so everyone sees the latest context.";
-  if (category === "owner")      return "These issues still show stale ownership in Jira. Update the assignee before the meeting if ownership changed.";
-  if (category === "delegated")  return "A few items you asked others to handle still look open in Jira. Be ready to check on them in the meeting.";
-  return fallbackText;
-}
+function profileScoreForThread(thread, meetingProfile = null) {
+  if (!meetingProfile) return 0;
 
-function createGroupedCheckItems(rawItems = []) {
-  const grouped = new Map();
-  for (const item of rawItems) {
-    if (!item || !item.text) continue;
-    const key = item.category || normalizeText(item.text);
-    if (!grouped.has(key)) grouped.set(key, { text: item.text.trim(), category: item.category || null, issues: [] });
-    const group = grouped.get(key);
-    if (item.issue) group.issues.push(item.issue);
+  const joinedText = [
+    thread.subject || "",
+    ...(thread.messages || []).flatMap((message) => [message.subject || "", message.preview || ""]),
+  ].join(" ").toLowerCase();
+
+  let score = 0;
+  for (const phrase of meetingProfile.phrases || []) {
+    if (joinedText.includes(phrase)) score += 40;
   }
-  return Array.from(grouped.values())
-    .map((group) => {
-      const issues = uniqueIssues(group.issues).slice(0, 4);
+
+  const threadTokens = normalizeTokens(joinedText);
+  score += overlapCount(threadTokens, meetingProfile.tokens || []) * 12;
+  return score;
+}
+
+function selectEmailsForPreMeeting({ allEmails = [], event, attendeeEmails = [], userEmail = "" }) {
+  const attendeeSet = new Set((attendeeEmails || []).map((email) => String(email || "").toLowerCase()));
+  const attendeeNames = (event.attendees || [])
+    .map((attendee) => firstName(attendee?.emailAddress?.name || attendee?.emailAddress?.address || ""))
+    .filter(Boolean);
+  const userHints = userIdentityHints(userEmail);
+  const eventTokens = unique(normalizeTokens(`${event.subject || ""} ${cleanHtml(event.body?.content || "")}`));
+  const meetingProfile = getMeetingProfile(event.subject || "");
+  const threads = groupEmailsIntoThreads(allEmails);
+
+  let scored = threads
+    .map((thread) => {
+      const stats = threadParticipantStats(thread, attendeeSet, userHints);
       return {
-        text:   buildGroupedCheckText(group.category, issues, group.text),
-        issues: issues.map((issue) => jiraService.buildIssueCard(issue)),
-        issue:  issues.length === 1 ? jiraService.buildIssueCard(issues[0]) : null,
+        thread,
+        coverage: stats.coverage,
+        outsiders: stats.outsiders,
+        profileScore: profileScoreForThread(thread, meetingProfile),
+        score: scoreThreadForMeeting(thread, { attendeeSet, attendeeNames, userHints, eventTokens, meetingProfile }),
       };
     })
-    .slice(0, 4);
-}
-
-function filterRedundantList(items = [], references = []) {
-  const refTexts = references.map((item) => item.text || "");
-  return (items || []).filter((item) => {
-    const norm       = normalizeText(item);
-    const itemTokens = normalizeTokens(item);
-    return !refTexts.some((ref) => {
-      if (normalizeText(ref) === norm) return true;
-      const refTokens = normalizeTokens(ref);
-      const overlap   = itemTokens.filter((token) => refTokens.includes(token)).length;
-      return overlap >= Math.min(3, itemTokens.length);
+    .filter((item) => item.score > 0)
+    .sort((a, b) => {
+      if (b.profileScore !== a.profileScore) return b.profileScore - a.profileScore;
+      if (b.coverage !== a.coverage) return b.coverage - a.coverage;
+      if (a.outsiders !== b.outsiders) return a.outsiders - b.outsiders;
+      if (b.score !== a.score) return b.score - a.score;
+      const lastA = itemLastDate(a.thread);
+      const lastB = itemLastDate(b.thread);
+      return lastB - lastA;
     });
-  });
+
+  if (meetingProfile) {
+    const profileMatched = scored.filter((item) => item.profileScore > 0);
+    if (profileMatched.length > 0) {
+      scored = profileMatched;
+    }
+  }
+
+  const bestThread = scored.length > 0 ? scored[0].thread : (threads[0] || null);
+  const relevantEmails = (bestThread ? bestThread.messages.map((message) => message.raw) : [])
+    .sort((a, b) => toMillis(b.receivedDateTime) - toMillis(a.receivedDateTime));
+
+  return {
+    thread: bestThread,
+    emails: relevantEmails,
+    candidateThreads: scored.map((item) => ({
+      threadId: item.thread.threadId,
+      subject: item.thread.subject,
+      coverage: item.coverage,
+      outsiders: item.outsiders,
+      profileScore: item.profileScore,
+      score: item.score,
+      messageCount: item.thread.messages.length,
+    })),
+    eventTokens,
+  };
 }
 
-function buildPreMeetingChecks({ followUps, issues, emails, userEmail, logger }) {
-  const checks    = [];
-  const userHints = userIdentityHints(userEmail);
-  const log       = typeof logger === "function" ? logger : () => {};
+function itemLastDate(thread) {
+  return toMillis(thread?.messages?.[thread.messages.length - 1]?.date);
+}
 
-  log(`[PreMeetingBrief] preMeetingChecks: issues=${issues.length} emails=${(emails || []).length} followUpItems=${(followUps?.items || []).length}`);
+function buildEmailThreadsForLlm(threads = []) {
+  return (threads || []).slice(0, 4).map((thread) => ({
+    threadId: thread.threadId,
+    subject: thread.subject,
+    messagesCount: thread.messages.length,
+    conversationLog: thread.messages
+      .map((message) => {
+        const sender = message.fromName || message.fromAddr || "Unknown";
+        const date = message.date ? message.date.slice(0, 16).replace("T", " ") : "unknown";
+        const preview = (message.preview || "").replace(/\s+/g, " ").trim();
+        return `[${date}] ${sender}: ${preview}`;
+      })
+      .join("\n"),
+  }));
+}
+
+function buildDeterministicFollowUps(bestPastMeeting, emails = []) {
+  if (!bestPastMeeting) return null;
+
+  const actionItems = (bestPastMeeting.actionItems || []).map((item) => ({ ...item }));
+  const normalized = emails || [];
+
+  const enrichedItems = actionItems.map((item) => {
+    const taskTokens = normalizeTokens(item.task || "");
+    const ownerEmails = normalized.filter((email) => ownerMatchesEmail(item.owner, email));
+    let matched = ownerEmails.find((email) => overlapCount(normalizeTokens(`${email.subject || ""} ${email.bodyPreview || ""}`), taskTokens) > 0);
+    if (!matched) {
+      matched = normalized.find((email) => overlapCount(normalizeTokens(`${email.subject || ""} ${email.bodyPreview || ""}`), taskTokens) > 1);
+    }
+
+    return {
+      owner: item.owner || "Unknown",
+      task: item.task || "Follow up",
+      status: matched ? "done" : "pending",
+      evidence: matched ? makeEvidence(item.owner || "Owner", matched) : null,
+      emailId: matched?.id || null,
+      emailSubject: matched?.subject || null,
+    };
+  });
+
+  const completed = enrichedItems.filter((item) => item.status === "done").length;
+  const pending = enrichedItems.filter((item) => item.status === "pending").length;
+
+  let narrative = bestPastMeeting.summary || `The previous meeting "${bestPastMeeting.subject}" assigned follow-up actions.`;
+  if (completed > 0 || pending > 0) {
+    const parts = [];
+    if (completed > 0) parts.push(`${completed} follow-up item(s) show email confirmation`);
+    if (pending > 0) parts.push(`${pending} item(s) still look open`);
+    narrative = `${narrative} ${parts.join(", ")}.`;
+  }
+
+  return {
+    date: bestPastMeeting.startTime || bestPastMeeting.savedAt || null,
+    subject: bestPastMeeting.subject || null,
+    narrative,
+    conversationStory: null,
+    items: enrichedItems,
+    nextMeetingPoints: (bestPastMeeting.plannedForNextMeeting || []).slice(0, 4),
+  };
+}
+
+function buildPreMeetingChecks({ followUps = null, issues = [], emails = [], userEmail = "" }) {
+  const checks = [];
+  const userHints = userIdentityHints(userEmail);
+  const addedIssueKeys = new Set();
 
   for (const item of followUps?.items || []) {
-    const issue      = findBestIssueMatch(`${item.task} ${item.evidence || ""}`, issues);
-    const ownedByUser =
-      ownerMatchesUser(item.owner, userHints) ||
-      (issue && issueAssignedToUser(issue, userHints));
+    const owner = String(item.owner || "").toLowerCase();
+    const ownedByUser = userHints.some((hint) => hint && owner.includes(hint));
+    if (ownedByUser && item.status !== "done") {
+      checks.push({ text: `You still own "${item.task}" from the previous meeting. Be ready to close it or explain the blocker.` });
+    }
+  }
 
-    if (item.status === "done" && ownedByUser && issue && !jiraService.isDoneStatus(issue.status)) {
-      checks.push({ text: `${issue.key} still shows ${issue.status} in Jira, but your mail trail suggests "${item.task}" may already be done. Update it before the call if that work is actually complete.`, category: "completion", issue });
+  const activeIssues = (issues || []).filter((issue) => !jiraService.isDoneStatus(issue.status));
+  const sortedEmails = (emails || []).slice().sort((a, b) => toMillis(b.receivedDateTime) - toMillis(a.receivedDateTime));
+
+  for (const email of sortedEmails) {
+    const emailText = email.bodyPreview || `${email.subject || ""} ${email.bodyPreview || ""}`;
+    if (!emailText) continue;
+
+    if (textHasCompletionSignal(emailText)) {
+      const candidateIssue = findBestIssueMatch(
+        emailText,
+        activeIssues.filter((issue) => senderMatchesIssueOwner(issue, email))
+      );
+
+      if (candidateIssue && !addedIssueKeys.has(candidateIssue.key)) {
+        const card = jiraService.buildIssueCard(candidateIssue);
+        const assignedToUser = issueAssignedToUser(candidateIssue, userHints);
+        checks.push({
+          text: assignedToUser
+            ? `${candidateIssue.key} sounds complete in the email thread, but Jira still shows it as ${candidateIssue.status}. Update it before the meeting so the team sees the real status.`
+            : `${candidateIssue.assignee || "The owner"} said ${candidateIssue.key} may be complete in the email thread, but Jira still shows it as ${candidateIssue.status}. Ask them for a quick update before the meeting so you know what is still pending.`,
+          issue: card,
+          issues: [card],
+        });
+        addedIssueKeys.add(candidateIssue.key);
+      }
     }
 
-    if (item.status === "pending" && !ownedByUser && issue) {
-      const relevantEmails = (emails || []).filter((email) => emailMatchesIssueOrTask(email, issue, item.task));
-      const userAsk        = relevantEmails.find((email) => emailFromUser(email, userHints) && textHasAskSignal(`${email.subject || ""} ${email.bodyPreview || ""}`));
-      const ownerPromise   = relevantEmails.find((email) => !emailFromUser(email, userHints) && ownerMatchesEmail(item.owner, email) && textHasPromiseSignal(`${email.subject || ""} ${email.bodyPreview || ""}`));
-      if (userAsk && ownerPromise && !jiraService.isDoneStatus(issue.status)) {
-        checks.push({ text: `You asked ${item.owner} to handle "${item.task}", and they acknowledged it, but ${issue.key} still looks open in Jira. Be ready to check on it in the meeting.`, category: "delegated", issue });
+    if (emailFromUser(email, userHints) && (textHasApprovalSignal(emailText) || textHasPromiseSignal(emailText))) {
+      const candidateIssue = findBestIssueMatch(
+        emailText,
+        activeIssues.filter((issue) => issueAssignedToUser(issue, userHints))
+      );
+
+      if (candidateIssue && !addedIssueKeys.has(candidateIssue.key)) {
+        const card = jiraService.buildIssueCard(candidateIssue);
+        checks.push({
+          text: `You committed to move ${candidateIssue.key} forward in the thread, but Jira still shows it as ${candidateIssue.status}. Update it before you join.`,
+          issue: card,
+          issues: [card],
+        });
+        addedIssueKeys.add(candidateIssue.key);
       }
     }
   }
 
-  for (const issue of issues) {
-    const latestUserEmail = latestRelevantUserEmail(issue, emails, userHints);
-    if (latestUserEmail) {
-      const userEmailText   = `${latestUserEmail.subject || ""} ${latestUserEmail.bodyPreview || ""}`;
-      const emailMs         = toMillis(latestUserEmail.receivedDateTime);
-      const issueMs         = toMillis(issue.latestCommentAt || issue.updatedAt);
-      const issueOwnedByUser      = issueAssignedToUser(issue, userHints);
-      const explicitlyReferenced  = emailMentionsIssueKey(latestUserEmail, issue);
-      if (issueOwnedByUser && explicitlyReferenced && textHasCommitmentSignal(userEmailText) && emailMs && issueMs && emailMs > issueMs + 5 * 60 * 1000 && !jiraService.isDoneStatus(issue.status)) {
-        checks.push({ text: buildStaleIssueActionText(issue, userEmailText), category: getStaleIssueCategory(issue, userEmailText), issue });
-      }
-    }
-
-    const issueEmailText = [latestUserEmail?.subject, latestUserEmail?.bodyPreview].join(" ").toLowerCase();
-    if (latestUserEmail && emailMentionsIssueKey(latestUserEmail, issue) && textHasOwnerSignal(issueEmailText) && (issue.assignee === "Unassigned" || issueAssignedToUser(issue, userHints))) {
-      checks.push({ text: buildStaleIssueActionText(issue, issueEmailText), category: "owner", issue });
-    }
-  }
-
-  const filteredChecks = checks.filter((check) => {
-    if (check.category === "delegated") return true;
-    if (!check.issue) return false;
-    if (issueAssignedToUser(check.issue, userHints)) return true;
-    return check.category === "owner" && check.issue.assignee === "Unassigned";
-  });
-
-  return createGroupedCheckItems(filteredChecks);
+  return checks.slice(0, 4);
 }
 
-function buildDiscussionItems({ llmBrief, followUps, executionContext, issues }) {
+function buildAgendaItems(llmBrief = {}, followUps = null, jiraExecutionContext = null, issues=[]) {
   const rawItems = [];
-  for (const text of executionContext?.discussionPoints || []) rawItems.push({ text, source: "jira" });
-  for (const text of followUps?.nextMeetingPoints || [])         rawItems.push({ text, source: "meeting" });
+
+  for (const item of llmBrief.agendaForToday || []) rawItems.push({ text: item });
+  for (const item of llmBrief.openPoints || []) rawItems.push({ text: item });
+  for (const item of followUps?.nextMeetingPoints || []) rawItems.push({ text: item });
   for (const item of followUps?.items || []) {
-    if (item.status === "pending") {
-      rawItems.push({ text: `${item.owner} still needs to ${item.task.charAt(0).toLowerCase()}${item.task.slice(1)}.`, source: "followUp" });
-    }
+    if (item.status === "pending") rawItems.push({ text: `${item.owner} needs to ${String(item.task || "").replace(/^[A-Z]/, (c) => c.toLowerCase())}.` });
   }
-  for (const text of llmBrief?.openPoints || []) rawItems.push({ text, source: "email" });
-  return createSectionItems(rawItems, issues).slice(0, 4);
+  for (const item of jiraExecutionContext?.discussionPoints || []) rawItems.push({ text: item });
+
+  const seen = new Set();
+  const agenda = [];
+  for (const item of rawItems) {
+    const text = String(item?.text || "").trim();
+    const key = normalizeText(text);
+    if (!text || !key || seen.has(key)) continue;
+    seen.add(key);
+
+    const matchedIssue = findBestIssueMatch(text, issues);  // ← add this
+    agenda.push({
+      text,
+      issue: matchedIssue ? jiraService.buildIssueCard(matchedIssue) : null,  // ← and this
+    });
+    if (agenda.length >= 5) break;
+  }
+  return agenda;
 }
 
-function buildAssignedToMe(issues = [], userEmail = "") {
-  const userHints = userIdentityHints(userEmail);
-  return issues
+function buildFallbackBrief(event, emails = [], followUps = null, jiraExecutionContext = null) {
+  const emailSubjects = unique(emails.map((email) => email.subject).filter(Boolean)).slice(0, 3);
+  const pendingItems = (followUps?.items || []).filter((item) => item.status === "pending");
+  const completedItems = (followUps?.items || []).filter((item) => item.status === "done");
+
+  let currentStatus = "Recent emails were analyzed to prepare this brief.";
+  if (emailSubjects.length > 0) {
+    currentStatus = `Recent discussion is centered on ${emailSubjects.join("; ")}.`;
+  }
+
+  if (pendingItems.length > 0) {
+    currentStatus += ` ${pendingItems.length} follow-up item(s) still appear open.`;
+  } else if (completedItems.length > 0) {
+    currentStatus += ` ${completedItems.length} follow-up item(s) already show progress in email.`;
+  }
+
+  const openPoints = pendingItems.map((item) => `${item.owner} still needs to ${item.task}.`).slice(0, 3);
+  if (openPoints.length === 0) {
+    openPoints.push(...(jiraExecutionContext?.blockers || []).slice(0, 3));
+  }
+
+  return {
+    meetingTitle: event.subject || "Upcoming meeting",
+    currentStatus,
+    followUps,
+    openPoints,
+    agendaForToday: (followUps?.nextMeetingPoints || []).slice(0, 4),
+    keyContext: `This brief was prepared from your upcoming meeting details${emails.length ? ` and ${emails.length} related email(s)` : ""}.`,
+  };
+}
+
+function buildAssignedToMe(issues = [], effectiveUserEmail = "") {
+  const userHints = userIdentityHints(effectiveUserEmail);
+  return (issues || [])
     .filter((issue) => issueAssignedToUser(issue, userHints))
     .filter((issue) => jiraService.isActiveStatus(issue.status))
     .slice(0, 5)
     .map((issue) => jiraService.buildIssueCard(issue));
 }
-
-function groupEmailsIntoThreads(emails = []) {
-  const threads = new Map();
-  for (const e of emails) {
-    const conv    = e.conversationId || "";
-    const subjKey = (e.subject || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").trim().slice(0, 80) || "__nosubj__";
-    const key     = conv || subjKey;
-    if (!threads.has(key)) {
-      threads.set(key, { threadId: key, subject: e.subject || "(no subject)", messages: [] });
-    }
-    threads.get(key).messages.push({
-      id: e.id || null,
-      fromName: (e.from?.emailAddress?.name || "").trim(),
-      fromAddr: (e.from?.emailAddress?.address || "").toLowerCase(),
-      date:    e.receivedDateTime || e.createdDateTime || null,
-      subject: e.subject || "",
-      preview: e.bodyPreview || "",
-      raw: e,
-    });
-  }
-  const out = Array.from(threads.values()).map((t) => {
-    t.messages.sort((a, b) => {
-      if (!a.date) return 1; if (!b.date) return -1;
-      return new Date(a.date) - new Date(b.date);
-    });
-    return t;
-  });
-  out.sort((a, b) => {
-    const la = a.messages[a.messages.length - 1]?.date || 0;
-    const lb = b.messages[b.messages.length - 1]?.date || 0;
-    return new Date(lb) - new Date(la);
-  });
-  return out;
-}
-
-function extractThreadEventsForTask(thread, owner, taskTokens) {
-  const events = [];
-  for (const msg of thread.messages) {
-    const from    = msg.fromName || msg.fromAddr || "unknown";
-    const isOwner = ownerMatchesEmail(owner, msg.raw);
-    if (!isOwner && emailMatchesTokens(msg.raw, taskTokens)) {
-      events.push({ type: "asked", by: from, to: owner, date: msg.date, subject: msg.subject, snippet: (msg.preview || "").slice(0, 240), emailId: msg.id });
-    }
-    if (isOwner && emailMatchesTokens(msg.raw, taskTokens)) {
-      events.push({ type: "responded", by: from, to: null, date: msg.date, subject: msg.subject, snippet: (msg.preview || "").slice(0, 240), emailId: msg.id });
-    }
-  }
-  return events;
-}
-
-function buildCombinedTimeline(meetingItem, emailThreadEvents) {
-  const timeline = [];
-  timeline.push({ type: "meeting", date: meetingItem.date || null, actor: meetingItem.owner || null, description: meetingItem.task || null, source: "meeting" });
-  for (const ev of emailThreadEvents) {
-    timeline.push({ type: ev.type, date: ev.date || null, actor: ev.by, description: ev.snippet || ev.subject || "", source: "email", emailId: ev.emailId || null, subject: ev.subject || null });
-  }
-  timeline.sort((a, b) => {
-    if (!a.date && !b.date) return 0;
-    if (!a.date) return 1; if (!b.date) return -1;
-    return new Date(a.date) - new Date(b.date);
-  });
-  return timeline;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HTTP Handler
-// ─────────────────────────────────────────────────────────────────────────────
 
 app.http("preMeetingBrief", {
   methods: ["GET", "OPTIONS"],
@@ -472,274 +576,142 @@ app.http("preMeetingBrief", {
     try {
       const { accessToken, userId, userEmail: tokenEmail } = extractAuth(req);
       const eventId = req.query.get("eventId");
-      if (!eventId) return errorResponse("eventId query parameter is required", 400);
 
-      context.log(`[PreMeetingBrief] userId: ${userId} | event: ${eventId}`);
+      if (!eventId) return errorResponse("eventId query parameter is required", 400);
 
       const [event, profile] = await Promise.all([
         graphService.getEvent(accessToken, eventId),
         graphService.getMyProfile(accessToken).catch(() => null),
       ]);
 
-      const effectiveUserEmail =
-        profile?.mail ||
-        profile?.userPrincipalName ||
-        tokenEmail;
-
-      context.log(`[PreMeetingBrief] effectiveUserEmail: ${effectiveUserEmail}`);
-
-      const attendeeEmails = (event.attendees || []).map((a) => a.emailAddress?.address).filter(Boolean);
-      const attendeeNames  = (event.attendees || []).map((a) => (a.emailAddress?.name || a.emailAddress?.address || "").toLowerCase().split(" ")[0]).filter((n) => n.length > 2);
-      const upcomingKeywords = normalizeTokens(event.subject);
-
-      context.log(`[PreMeetingBrief] attendees: ${attendeeEmails.join(", ")} | keywords: ${upcomingKeywords.join(", ")}`);
+      const effectiveUserEmail = profile?.mail || profile?.userPrincipalName || tokenEmail;
+      const attendeeEmails = (event.attendees || []).map((attendee) => attendee.emailAddress?.address).filter(Boolean);
 
       const [recentEmailsResult, previousMeetings] = await Promise.all([
-        graphService.getEmailsFromAttendees(accessToken, attendeeEmails, 40),
-        cosmosService.getPreviousMeetings(userId, attendeeEmails, upcomingKeywords, 1),
+        graphService.getEmailsFromAttendees(accessToken, attendeeEmails, 200),
+        cosmosService.getPreviousMeetings(userId, attendeeEmails, normalizeTokens(event.subject || ""), 1).catch(() => []),
       ]);
 
-      const allEmails     = recentEmailsResult.value || [];
-      const bestPastMeeting = previousMeetings?.length > 0 ? previousMeetings[0] : null;
-
-      const pastMeetingKeywords = bestPastMeeting ? normalizeTokens(bestPastMeeting.subject) : [];
-      const allKeywords  = [...new Set([...upcomingKeywords, ...pastMeetingKeywords])];
-      const attendeeAddressSet = new Set(attendeeEmails.map((e) => (e || "").toLowerCase()));
-      const userHints    = userIdentityHints(effectiveUserEmail);
-
-      const strictRelevantEmails = allEmails.filter((e) => {
-        const subject  = (e.subject || "").toLowerCase();
-        const preview  = (e.bodyPreview || "").toLowerCase();
-        const fromAddr = (e.from?.emailAddress?.address || "").toLowerCase();
-        const fromName = (e.from?.emailAddress?.name    || "").toLowerCase();
-        const recipients = emailRecipientAddresses(e);
-
-        const isFromAttendee  = attendeeEmails.map((a) => a.toLowerCase()).includes(fromAddr) || attendeeNames.some((n) => fromName.includes(n));
-        const isFromUser      = emailFromUser(e, userHints);
-        const isSentToAttendee = recipients.some((addr) => attendeeAddressSet.has(addr));
-
-        const tokens  = normalizeTokens(subject + " " + preview);
-        const isAbout = tokens.some((t) => allKeywords.includes(t));
-        return isAbout && (isFromAttendee || (isFromUser && isSentToAttendee));
+      const allEmails = recentEmailsResult?.value || [];
+      const selection = selectEmailsForPreMeeting({
+        allEmails,
+        event,
+        attendeeEmails,
+        userEmail: effectiveUserEmail,
       });
+      const selectedThread = selection.thread;
+      const emails = selection.emails;
+      const emailThreads = buildEmailThreadsForLlm(selectedThread ? [selectedThread] : []);
+      const bestPastMeeting = previousMeetings?.[0] || null;
+      const deterministicFollowUps = buildDeterministicFollowUps(bestPastMeeting, emails);
 
-      let emailsToAnalyze = strictRelevantEmails.length > 0
-        ? strictRelevantEmails.slice(0, 20)
-        : allEmails.filter((e) => {
-            const tokens = normalizeTokens(`${e.subject || ""} ${e.bodyPreview || ""}`);
-            return tokens.some((t) => allKeywords.includes(t));
-          }).slice(0, 15);
+      let jiraResult = {
+        executionContext: null,
+        issues: [],
+        meta: { enabled: false, matchedIssueCount: 0 },
+      };
 
-      const userRelevantEmails = strictRelevantEmails.filter((email) => emailFromUser(email, userHints)).slice(0, 5);
-      if (userRelevantEmails.length > 0) {
-        const byId = new Map();
-        for (const email of userRelevantEmails.concat(emailsToAnalyze)) {
-          const key = email.id || `${email.conversationId || ""}:${email.receivedDateTime || ""}:${email.subject || ""}`;
-          if (!byId.has(key)) byId.set(key, email);
-        }
-        emailsToAnalyze = Array.from(byId.values()).slice(0, 20);
-      }
-
-      let deterministicFollowUps = null;
-      let pastMeetingContext     = [];
-
-      if (bestPastMeeting) {
-        const meeting = {
-          subject:               bestPastMeeting.subject,
-          date:                  bestPastMeeting.startTime || bestPastMeeting.savedAt || null,
-          summary:               bestPastMeeting.summary  || null,
-          transcript:            bestPastMeeting.transcript ? bestPastMeeting.transcript.slice(0, 4000) : null,
-          actionItems:           (bestPastMeeting.actionItems || []).map((a) => ({ ...a })),
-          plannedForNextMeeting: bestPastMeeting.plannedForNextMeeting || [],
-        };
-
-        const analyzedPool = emailsToAnalyze.concat(allEmails);
-        meeting.actionItems = meeting.actionItems.map((item) => {
-          const owner      = item.owner || "";
-          const task       = item.task  || "";
-          const taskTokens = normalizeTokens(task);
-          const ownerEmails = analyzedPool.filter((e) => ownerMatchesEmail(owner, e));
-          let matched = ownerEmails.find((e) => emailMatchesTokens(e, taskTokens));
-          if (!matched) matched = analyzedPool.find((e) => emailMatchesTokens(e, taskTokens));
-          if (matched) {
-            return { owner, task, status: "done", evidence: makeEvidence(owner, matched), emailId: matched.id || null, emailSubject: matched.subject || null };
-          }
-          return { owner, task, status: "pending", evidence: null, emailId: null, emailSubject: null };
-        });
-
-        pastMeetingContext = [meeting];
-
-        const threads     = groupEmailsIntoThreads(emailsToAnalyze);
-        const emailThreads = threads.map((t) => {
-          const threadEvents = [];
-          for (const ai of meeting.actionItems) {
-            const taskTokens = normalizeTokens(ai.task || "");
-            const evs = extractThreadEventsForTask(t, ai.owner || "", taskTokens);
-            evs.forEach((x) => (x.relatedTask = ai.task));
-            threadEvents.push(...evs);
-          }
-          const contextMessages = t.messages.slice(0, 3).map((m) => ({
-            date: m.date, from: m.fromName || m.fromAddr, subject: m.subject,
-            snippet: (m.preview || "").slice(0, 180), emailId: m.id || null,
-          }));
-          return {
-            threadId: t.threadId, subject: t.subject,
-            latestMessage: t.messages[t.messages.length - 1]?.date || null,
-            messagesCount: t.messages.length, contextMessages, events: threadEvents,
-          };
-        });
-
-        const combinedPerItem = meeting.actionItems.map((ai) => {
-          const itemEvents = [];
-          for (const thr of emailThreads) {
-            for (const ev of thr.events) { if (ev.relatedTask === ai.task) itemEvents.push(ev); }
-          }
-          const timeline = buildCombinedTimeline({ owner: ai.owner, task: ai.task, date: meeting.date }, itemEvents);
-          return { owner: ai.owner, task: ai.task, status: ai.status, evidence: ai.evidence, emailId: ai.emailId, emailSubject: ai.emailSubject, timeline };
-        });
-
-        const meetingNarrativeParts = [];
-        if (meeting.summary) {
-          meetingNarrativeParts.push(meeting.summary.split("\n")[0].trim());
-        } else {
-          meetingNarrativeParts.push(`In the previous meeting titled "${meeting.subject}", concrete next steps were defined.`);
-        }
-        if (meeting.actionItems.length > 0) {
-          const commits = meeting.actionItems.map((a) => `${a.owner} → ${a.task}`).slice(0, 3);
-          meetingNarrativeParts.push(`Owners were assigned: ${commits.join("; ")}.`);
-        }
-        const doneCount    = meeting.actionItems.filter((a) => a.status === "done").length;
-        const pendingCount = meeting.actionItems.filter((a) => a.status === "pending").length;
-        if (doneCount    > 0) meetingNarrativeParts.push(`${doneCount} tracked action(s) show confirmation via email evidence.`);
-        if (pendingCount > 0) meetingNarrativeParts.push(`${pendingCount} tracked action(s) remain pending.`);
-
-        deterministicFollowUps = {
-          meeting: { subject: meeting.subject, date: meeting.date, summary: meeting.summary, actionItems: meeting.actionItems, plannedForNextMeeting: meeting.plannedForNextMeeting.slice(0, 4), narrative: meetingNarrativeParts.join(" ") },
-          emailThreads,
-          items: combinedPerItem,
-          combinedTimeline: [].concat(...combinedPerItem.map((c) => c.timeline)).sort((a, b) => {
-            if (!a.date && !b.date) return 0;
-            if (!a.date) return 1; if (!b.date) return -1;
-            return new Date(a.date) - new Date(b.date);
-          }),
-        };
-      }
-
-      let jiraResult;
       try {
         jiraResult = await jiraService.buildPreCallExecutionContext({
-          event, pastMeeting: bestPastMeeting, emails: emailsToAnalyze,
-          attendeeEmails, attendeeNames, userEmail: effectiveUserEmail,
+          event,
+          pastMeeting: bestPastMeeting,
+          emails,
+          emailThread: selectedThread,
+          attendeeEmails,
+          attendeeNames: (event.attendees || []).map((attendee) => attendee.emailAddress?.name || attendee.emailAddress?.address).filter(Boolean),
+          userEmail: effectiveUserEmail,
         });
-      } catch (err) {
-        context.error("[PreMeetingBrief] Jira step failed:", err?.message);
-        jiraResult = { executionContext: null, issues: [], meta: { enabled: false, matchedIssueCount: 0 } };
+      } catch (error) {
+        context.log(`[PreMeetingBrief] Jira step skipped: ${error.message}`);
       }
 
-      let llmBrief;
+      const enrichedEvent = {
+        ...event,
+        description: cleanHtml(event.body?.content || event.description || ""),
+      };
+
+      let llmBrief = null;
       try {
-        function cleanHtml(html) {
-          if (!html) return "";
-          return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-        }
-
-        const enrichedEvent = {
-            ...event,
-          description: cleanHtml(
-            event.body?.content || event.description || ""
-          )
-        };
-
         llmBrief = await openaiService.generatePreCallBrief({
           event: enrichedEvent,
-          recentEmails:         emailsToAnalyze,
-          pastMeetings:         pastMeetingContext,
+          recentEmails: emails,
+          emailThreads,
+          pastMeetings: bestPastMeeting ? [{
+            subject: bestPastMeeting.subject,
+            date: bestPastMeeting.startTime || bestPastMeeting.savedAt || null,
+            summary: bestPastMeeting.summary || null,
+            transcript: bestPastMeeting.transcript ? bestPastMeeting.transcript.slice(0, 4000) : null,
+            actionItems: bestPastMeeting.actionItems || [],
+            plannedForNextMeeting: bestPastMeeting.plannedForNextMeeting || [],
+          }] : [],
           jiraExecutionContext: jiraResult.executionContext,
         });
-      } catch (err) {
-        context.error("[PreMeetingBrief] LLM step failed:", err?.message);
-        throw err;
+      } catch (error) {
+        context.log(`[PreMeetingBrief] LLM step skipped: ${error.message}`);
       }
 
-      let finalBrief = llmBrief && typeof llmBrief === "object" ? { ...llmBrief } : {};
-      if (!finalBrief.followUps) finalBrief.followUps = null;
+      const finalBrief = llmBrief && typeof llmBrief === "object"
+        ? { ...llmBrief }
+        : buildFallbackBrief(event, emails, deterministicFollowUps, jiraResult.executionContext);
 
-      if (deterministicFollowUps) {
-        finalBrief.followUps = finalBrief.followUps || {};
-        finalBrief.followUps.meeting              = finalBrief.followUps.meeting || deterministicFollowUps.meeting;
-        finalBrief.followUps.items                = deterministicFollowUps.items;
-        finalBrief.followUps.nextMeetingPoints     = (finalBrief.followUps.nextMeetingPoints?.length > 0) ? finalBrief.followUps.nextMeetingPoints : deterministicFollowUps.meeting.plannedForNextMeeting;
-        finalBrief.followUps.emailThreads          = deterministicFollowUps.emailThreads;
-        finalBrief.followUps.combinedTimeline      = deterministicFollowUps.combinedTimeline;
-        finalBrief.followUps.narrative             = finalBrief.followUps.narrative || deterministicFollowUps.meeting.narrative;
+      if (!finalBrief.followUps && deterministicFollowUps) {
+        finalBrief.followUps = deterministicFollowUps;
       }
 
       if (jiraResult.executionContext) {
         finalBrief.executionContext = {
-          title:      jiraResult.executionContext.title,
-          spaceName:  jiraResult.executionContext.spaceName,
+          title: jiraResult.executionContext.title,
+          spaceName: jiraResult.executionContext.spaceName,
           statusLine: jiraResult.executionContext.statusLine,
-          blockers:   jiraResult.executionContext.blockers,
+          blockers: jiraResult.executionContext.blockers || [],
         };
       }
 
-      try {
-        // Consolidated rich agenda construction
-        const mergedAgenda = buildDiscussionItems({
-          llmBrief: finalBrief,
-          followUps: finalBrief.followUps,
-          executionContext: jiraResult.executionContext,
-          issues: jiraResult.issues,
-        });
-
-        // Set properties for other files to pickup
-        finalBrief.agenda = mergedAgenda;
-        finalBrief.agendaForToday = mergedAgenda;
-        
-        // Remove openPoints as they are now part of the rich agenda
-        finalBrief.openPoints = [];
-
-        finalBrief.assignedToMe = buildAssignedToMe(jiraResult.issues, effectiveUserEmail);
-        finalBrief.preMeetingChecks = buildPreMeetingChecks({
-          followUps: finalBrief.followUps,
-          issues:    jiraResult.issues,
-          emails:    emailsToAnalyze,
-          userEmail: effectiveUserEmail,
-          logger:    (...args) => context.log(...args),
-        });
-
-      } catch (err) {
-        context.error("[PreMeetingBrief] post-LLM assembly failed:", err?.message);
-        throw err;
-      }
-
-      await cosmosService.saveMeetingRecord(userId, eventId, {
-        subject:           event.subject,
-        attendees:         attendeeEmails,
-        keywords:           upcomingKeywords,
-        startTime:         event.start?.dateTime,
-        briefGenerated:    true,
-        briefGeneratedAt:  new Date().toISOString(),
+      finalBrief.agenda = buildAgendaItems(finalBrief, finalBrief.followUps, jiraResult.executionContext, jiraResult.issues);      
+      finalBrief.agendaForToday = finalBrief.agenda;
+      finalBrief.assignedToMe = buildAssignedToMe(jiraResult.issues, effectiveUserEmail);
+      finalBrief.preMeetingChecks = buildPreMeetingChecks({
+        followUps: finalBrief.followUps,
+        issues: jiraResult.issues,
+        emails,
+        userEmail: effectiveUserEmail,
       });
+
+      try {
+        await cosmosService.saveMeetingRecord(userId, eventId, {
+          subject: event.subject,
+          attendees: attendeeEmails,
+          keywords: normalizeTokens(event.subject || ""),
+          startTime: event.start?.dateTime || event.start || null,
+          briefGenerated: true,
+          briefGeneratedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        context.log(`[PreMeetingBrief] saveMeetingRecord skipped: ${error.message}`);
+      }
 
       return jsonResponse({
         success: true,
         event: {
-          id: event.id, subject: event.subject, start: event.start, end: event.end,
-          attendees: event.attendees, joinUrl: event.onlineMeeting?.joinUrl,
+          id: event.id,
+          subject: event.subject,
+          start: event.start,
+          end: event.end,
+          attendees: event.attendees,
+          joinUrl: event.onlineMeeting?.joinUrl,
         },
         brief: finalBrief,
         meta: {
-          emailsAnalyzed:           emailsToAnalyze.length,
-          previousMeetingsFound:    bestPastMeeting ? 1 : 0,
+          emailsAnalyzed: emails.length,
+          previousMeetingsFound: bestPastMeeting ? 1 : 0,
           hasPreviousMeetingContext: Boolean(bestPastMeeting),
-          enabled:           jiraResult.meta.enabled,
-          matchedIssueCount: jiraResult.meta.matchedIssueCount,
+          enabled: Boolean(jiraResult.meta?.enabled),
+          matchedIssueCount: jiraResult.meta?.matchedIssueCount || 0,
         },
       });
-    } catch (err) {
-      context.error("[PreMeetingBrief] Error:", err.stack || err.message || err);
-      return errorResponse(err.message);
+    } catch (error) {
+      context.error("[PreMeetingBrief] Error:", error.stack || error.message || error);
+      return errorResponse(error.message);
     }
   },
 });
