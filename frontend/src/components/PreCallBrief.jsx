@@ -117,7 +117,14 @@ export default function PreCallBrief() {
 
   useEffect(() => {
     getEvents()
-      .then((r) => setEvents(r.events || []))
+    .then((r) => {
+      const now = new Date();
+      const upcoming = (r.events || []).filter(e => {
+        const start = getDateString(e.start);
+        return start && new Date(start) > now;
+      });
+      setEvents(upcoming);
+    })
       .catch((e) => setError(e.message))
       .finally(() => setLoadingEvents(false));
   }, []);

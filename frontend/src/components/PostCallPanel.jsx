@@ -34,7 +34,12 @@ export default function PostCallPanel() {
     setLoadingEvents(true);
     try {
       const r = await getEvents();
-      setEvents(r.events || []);
+      const now = new Date();
+      const past = (r.events || []).filter(e => {
+        const raw = e.start?.dateTime || e.start;
+        return raw && new Date(raw) < now;
+      });
+      setEvents(past);
     } catch (e) {
       setError(e.message);
     } finally {
