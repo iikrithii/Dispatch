@@ -265,7 +265,7 @@ export default function PreCallBrief() {
     disabled={!selectedEvent}
     onClick={() => selectedEvent && setNotesMode({ event: selectedEvent, brief: brief || null })}
   >
-    📝 Prepare Meeting Notes
+    📝 Prepare Speaking Brief
   </button>
 </div>
           </div>

@@ -189,7 +189,7 @@ export default function MeetingNotes({ event, brief: initialBrief, onBack }) {
             ← Back
           </button>
           <div>
-            <div className="page-title" style={{ fontSize: 18 }}>📝 Meeting Notes</div>
+            <div className="page-title" style={{ fontSize: 18 }}>📝 Speaking Brief</div>
             <div className="page-subtitle" style={{ fontSize: 13, marginTop: 2 }}>
               {event?.subject || "Prepare your speaking points"}
             </div>
