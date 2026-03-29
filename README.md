@@ -4,6 +4,14 @@
 
 ---
 
+## Hosted App
+
+Try Dispatch here: [https://blue-hill-03f693c00.1.azurestaticapps.net](https://blue-hill-03f693c00.1.azurestaticapps.net)
+
+> This prototype opens in a preloaded demo workspace so you can evaluate the experience immediately without spending time on sign-in or account setup. Some actions are intentionally sandboxed to the demo user for reliability during judging, but the underlying flows, reasoning, and UI behavior reflect how the product works with a real connected account.
+
+---
+
 ## What is Dispatch?
 
 Dispatch is an AI layer that sits on top of Microsoft 365 and cuts down the context-switching cost of meetings. It surfaces the right information at the right transition — before a call, after a call, and in between.
