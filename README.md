@@ -1,12 +1,12 @@
 # Dispatch — AI Meeting Layer for Microsoft 365
- 
-> This is a prototype which is currently submitted to Microsoft AI Unlocked — Phase 2  
+
+> This is a prototype which is currently submitted to Microsoft AI Unlocked — Phase 2
 
 ---
 
 ## What is Dispatch?
 
-Dispatch is an AI layer that sits on top of Microsoft 365 and eliminates the context-switching tax of meetings. It surfaces the right information at the right transition — before a call, after a call, and in between.
+Dispatch is an AI layer that sits on top of Microsoft 365 and cuts down the context-switching cost of meetings. It surfaces the right information at the right transition — before a call, after a call, and in between.
 
 ---
 
@@ -17,25 +17,33 @@ Before any meeting, Dispatch reads your calendar event, cross-references your re
 - **Current status** of the project or topic
 - **Last meeting recap** — with every action item marked ✅ DONE or ⏳ PENDING, cross-referenced against your inbox
 - **Open points** extracted directly from email thread content
-- **Agenda for today** — focused on what's still unresolved
-- **Key context** — the single most critical thing from the emails you need to know walking in
+- **Agenda for today** — focused on what is still unresolved
+- **Key context** — the most important thing from the emails you need to know walking in
+- **Jira-linked issues** — open work items and blockers that still need attention
 - **Join link** — one click to enter the call
 
 ### Post-Call Processing
 Paste a meeting transcript and Dispatch extracts:
 - Structured action items with owner, deadline, and urgency
-- Soft commitments ("I'll send that over") as separate tracked items
+- Soft commitments ("I’ll send that over") as separate tracked items
 - Drafted follow-up emails ready to send
 - Suggested follow-up meeting with agenda
 - Key decisions made
+- Meeting effectiveness and engagement analysis
 
-Everything goes into an **approval queue first**. Dispatch proposes, you decide. Approved tasks land in Microsoft To-Do. Approved emails go to your Outlook Drafts. Approved calendar invites create the event.
+Everything goes into an **approval queue first**. Dispatch proposes, you decide. Approved items are saved from the queue. Tasks are no longer pushed into Microsoft To Do; the post-call flow now focuses on drafts, reminders, and follow-ups.
 
 ### Thread Catch-Up
-Select any email thread from your inbox. Dispatch reads the full conversation and gives you a 3-line summary: what this is about, where it stands right now, and what's expected of you — with a suggested reply if action is needed.
+Select any email thread from your inbox. Dispatch reads the full conversation and gives you a 3-line summary: what this is about, where it stands right now, and what is expected of you — with a suggested reply if action is needed.
 
 ### Daily View
-An AI-prioritised view combining today's meetings, pending tasks from Microsoft To-Do, and urgent emails needing a response. Filters noise so only what matters surfaces.
+An AI-prioritised view combining today's meetings, pending approvals, urgent emails needing a response, dispatch tasks, and reminders. It keeps noise out so only what matters surfaces.
+
+### Projects
+Dispatch clusters your inbox, meetings, and unresolved issues into a project graph. Open a project to see its summary, recent meetings, people involved, linked threads, key tasks, and unresolved work. You can also generate a handover report for any project.
+
+### Speaking Points
+Dispatch can turn rough prompts into polished meeting speaking points. It is useful when you want to capture what you need to say first and clean it up later, including code-mixed or voice input.
 
 ---
 
@@ -45,39 +53,58 @@ An AI-prioritised view combining today's meetings, pending tasks from Microsoft 
 dispatch/
 ├── backend/                          # Azure Functions (Node.js 18)
 │   ├── src/
-│   │   ├── functions/
-│   │   │   ├── preMeetingBrief.js    # GET /api/pre-meeting-brief?eventId=
-│   │   │   ├── postMeetingProcess.js # POST /api/post-meeting-process
-│   │   │   ├── threadCatchup.js      # GET /api/thread-catchup?conversationId=
-│   │   │   ├── dailyTodos.js         # GET /api/daily-todos
+│   │   ├── functions/                # Each HTTP trigger lives here
 │   │   │   ├── approveItem.js        # POST /api/approve-item
-│   │   │   ├── getEvents.js          # GET /api/get-events
-│   │   │   └── getInbox.js           # GET /api/get-inbox
-│   │   ├── services/
-│   │   │   ├── graphService.js       # All Microsoft Graph API calls
-│   │   │   ├── openaiService.js      # All AI completions (GPT-4o via GitHub Models)
-│   │   │   └── cosmosService.js      # Cosmos DB — meeting history, approval queue
+│   │   │   ├── dailyTodos.js         # GET /api/daily-todos
+│   │   │   ├── getEvents.js          # GET /api/events
+│   │   │   ├── getHandoverReport.js  # GET /api/handover-report
+│   │   │   ├── getInbox.js           # GET /api/inbox
+│   │   │   ├── getProjectDetails.js  # GET /api/project-details
+│   │   │   ├── getProjectsSummary.js # POST /api/projects-summary
+│   │   │   ├── getUnresolvedIssues.js # GET /api/unresolved-issues
+│   │   │   ├── meetingNotes.js       # POST /api/meeting-notes
+│   │   │   ├── postMeetingProcess.js  # POST /api/post-meeting-process
+│   │   │   ├── preMeetingBrief.js    # GET /api/pre-meeting-brief?eventId=
+│   │   │   └── threadCatchup.js      # GET/POST /api/thread-catchup
+│   │   ├── services/                 # Data, AI, and Jira helpers
+│   │   │   ├── cosmosService.js      # Cosmos DB — meeting history, approvals, reminders
+│   │   │   ├── graphService.js       # Microsoft Graph API calls
+│   │   │   ├── jiraMockData.js       # Demo Jira data
+│   │   │   ├── jiraService.js        # Jira issue matching and cards
+│   │   │   ├── openaiService.js      # AI completions
+│   │   │   └── test-buildPreCallExecutionContext.js
 │   │   └── utils/
-│   │       └── auth.js               # JWT decode, userId extraction
+│   │       └── auth.js               # Token extraction and response helpers
 │   ├── host.json
 │   ├── local.settings.json           # Environment variables (not committed)
-│   ├── seed-meetings.js              # One-time script to seed demo past meetings
 │   └── package.json
 │
 ├── frontend/                         # React 18 + MSAL
+│   ├── public/
 │   ├── src/
+│   │   ├── assets/                   # Logos and app images
 │   │   ├── components/
-│   │   │   ├── PreCallBrief.jsx
+│   │   │   ├── DailyTodos.jsx
+│   │   │   ├── MeetingNotes.jsx
 │   │   │   ├── PostCallPanel.jsx
-│   │   │   ├── ThreadCatchup.jsx
-│   │   │   └── DailyTodos.jsx
+│   │   │   ├── PreCallBrief.jsx
+│   │   │   ├── ProjectsTab.jsx
+│   │   │   └── ThreadCatchup.jsx
 │   │   ├── services/
-│   │   │   ├── auth.js               # MSAL config + token helpers
-│   │   │   └── api.js                # Backend API client
+│   │   │   ├── api.js                # Backend API client
+│   │   │   └── auth.js               # MSAL config + token helpers
 │   │   ├── App.jsx
-│   │   └── App.css
-│   ├── .env                          # REACT_APP_CLIENT_ID, REACT_APP_API_URL
+│   │   ├── App.css
+│   │   └── index.js
 │   └── package.json
+│
+├── gallery/                          # Screenshots and presentation images
+│   ├── home.png
+│   ├── post-call.png
+│   ├── post-callui.png
+│   ├── precall.png
+│   ├── signin.png
+│   └── threadcatchup.png
 │
 └── teams-manifest/
     └── manifest.json                 # Teams app manifest for sideloading
@@ -89,11 +116,13 @@ dispatch/
 |---|---|
 | Frontend | React 18, MSAL (`@azure/msal-browser`) |
 | Backend | Azure Functions v4, Node.js 18 |
-| AI | GPT-5o/Groq |
+| AI | Azure OpenAI or Groq through the OpenAI SDK |
 | Data | Microsoft Graph API (Calendar, Mail, Tasks) |
-| Storage | Azure Cosmos DB (serverless, Korea Central) |
+| Storage | Azure Cosmos DB (serverless) |
 | Auth | Microsoft Identity Platform — supports personal + org accounts |
 | Hosting | Azure Static Web Apps (frontend) + Azure Function App (backend) |
+
+The backend folder keeps the HTTP routes separate from the service layer so the functions stay small. The frontend keeps UI panels in `components/`, token and auth logic in `services/auth.js`, and API calls in `services/api.js`.
 
 ---
 
@@ -108,7 +137,7 @@ dispatch/
 
 ## Azure Setup
 
-All resources must be in a supported region for your subscription. For Azure for Students, use **Korea Central**.
+All resources must be in a supported region for your subscription.
 
 ### 1. Azure App Registration
 
@@ -128,21 +157,28 @@ All resources must be in a supported region for your subscription. For Azure for
    - `Tasks.ReadWrite`
 7. Click **Grant admin consent**
 8. Note your **Application (client) ID** and **Directory (tenant) ID**
+9. If your backend uses a client secret for any server-side Graph or app-auth flow, note the **Client secret** too
 
 ### 2. Azure Cosmos DB
 
-1. Create a **Cosmos DB** account → API: **Azure Cosmos DB for NoSQL** → Region: Korea Central → Capacity: **Serverless**
+1. Create a **Cosmos DB** account → API: **Azure Cosmos DB for NoSQL** → Region: use a supported region for your subscription → Capacity: **Serverless**
 2. Create database: `dispatch`
 3. Create container: `tasks` with partition key `/userId`
 4. Go to **Keys** → note the **URI** and **Primary Key**
 
-### 3. GitHub Models API Key (Free GPT-4o)
+### 3. AI Provider Setup
 
-1. Go to [github.com/marketplace/models](https://github.com/marketplace/models)
-2. Select **GPT-4o** → Get API Key → Generate a **GitHub Personal Access Token**
-3. Note the token — this is your `OPENAI_API_KEY`
+Dispatch supports two backends for AI calls:
 
-> **Why not Azure OpenAI?** Azure OpenAI requires a separate approval on Azure for Students subscriptions. GitHub Models provides free GPT-4o access through the same OpenAI SDK and routes through a Microsoft-ecosystem endpoint (`models.inference.ai.azure.com`).
+**Option A: Azure OpenAI**
+1. Set `AZURE_OPENAI_ENDPOINT`
+2. Set `AZURE_OPENAI_KEY`
+3. Set `AZURE_OPENAI_DEPLOYMENT`
+
+**Option B: Groq fallback**
+1. Set `GROQ_API_KEY`
+
+If Azure OpenAI is set, Dispatch uses it. Otherwise it falls back to Groq.
 
 ---
 
@@ -171,13 +207,17 @@ Edit `backend/local.settings.json`:
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "node",
     "FUNCTIONS_NODE_BLOCK_ON_ENTRY_POINT_ERROR": "true",
-    "OPENAI_API_KEY": "<your GitHub Models token>",
-    "COSMOS_ENDPOINT": "<Cosmos DB URI from Azure Portal → Keys>",
-    "COSMOS_KEY": "<Cosmos DB Primary Key>",
+    "AZURE_OPENAI_ENDPOINT": "https://YOUR_RESOURCE.openai.azure.com/",
+    "AZURE_OPENAI_KEY": "YOUR_AZURE_OPENAI_KEY",
+    "AZURE_OPENAI_DEPLOYMENT": "gpt-4o",
+    "GROQ_API_KEY": "YOUR_GROQ_API_KEY",
+    "COSMOS_ENDPOINT": "https://YOUR_COSMOS.documents.azure.com:443/",
+    "COSMOS_KEY": "YOUR_COSMOS_KEY",
     "COSMOS_DATABASE": "dispatch",
     "COSMOS_CONTAINER": "tasks",
-    "AZURE_TENANT_ID": "<from App Registration>",
-    "AZURE_CLIENT_ID": "<from App Registration>",
+    "AZURE_TENANT_ID": "YOUR_TENANT_ID",
+    "AZURE_CLIENT_ID": "YOUR_CLIENT_ID",
+    "AZURE_CLIENT_SECRET": "YOUR_CLIENT_SECRET",
     "ALLOWED_ORIGINS": "http://localhost:3000"
   },
   "Host": {
@@ -194,12 +234,11 @@ Create `frontend/.env`:
 
 ```env
 REACT_APP_CLIENT_ID=<your App Registration client ID>
-REACT_APP_TENANT_ID=common
 REACT_APP_API_URL=http://localhost:7071/api
 HTTPS=true
 ```
 
-> `REACT_APP_TENANT_ID` must be `common` — not your actual tenant ID — to support personal Microsoft accounts alongside organisational accounts.
+`REACT_APP_TENANT_ID` is no longer needed because the app uses the `common` authority directly in `frontend/src/services/auth.js`.
 
 ### 4. Start the backend
 
@@ -208,15 +247,20 @@ cd backend
 func start
 ```
 
-All 7 routes should appear in the terminal:
+The routes should appear in the terminal, including:
 ```
-GET  http://localhost:7071/api/get-events
-GET  http://localhost:7071/api/get-inbox
+GET  http://localhost:7071/api/events
+GET  http://localhost:7071/api/inbox
 GET  http://localhost:7071/api/pre-meeting-brief
 POST http://localhost:7071/api/post-meeting-process
-GET  http://localhost:7071/api/thread-catchup
+GET/POST http://localhost:7071/api/thread-catchup
 GET  http://localhost:7071/api/daily-todos
 POST http://localhost:7071/api/approve-item
+GET  http://localhost:7071/api/project-details
+POST http://localhost:7071/api/projects-summary
+GET  http://localhost:7071/api/unresolved-issues
+POST http://localhost:7071/api/meeting-notes
+GET  http://localhost:7071/api/handover-report
 ```
 
 ### 5. Start the frontend
@@ -230,7 +274,7 @@ Frontend runs at `https://localhost:3000`. Sign in with your Microsoft account w
 
 ---
 
-## Deploy to Azure 
+## Deploy to Azure
 
 Once it works locally, deploying to Azure takes about 20 minutes.
 
@@ -238,7 +282,7 @@ Once it works locally, deploying to Azure takes about 20 minutes.
 
 ## Log in to Azure CLI
 
-```
+```bash
 az login
 ```
 
@@ -248,41 +292,22 @@ A browser window opens → sign in with `admin@YOURNAME.onmicrosoft.com` → clo
 
 ## Set Environment Variables on the Function App
 
-Run this entire block (replace all the YOUR_X values with your real values — same ones from local.settings.json):
+Run this block and replace the `YOUR_X` values with your real values:
 
-```
-az functionapp config appsettings set \
-  --name dispatch-api-YOURNAME \
-  --resource-group dispatch-rg \
-  --settings \
-  "AZURE_OPENAI_ENDPOINT=https://dispatch-openai.openai.azure.com/" \
-  "AZURE_OPENAI_API_KEY=your_actual_key" \
-  "AZURE_OPENAI_DEPLOYMENT=gpt-4o" \
-  "COSMOS_ENDPOINT=https://dispatch-cosmos-yourname.documents.azure.com:443/" \
-  "COSMOS_KEY=your_actual_cosmos_key" \
-  "COSMOS_DATABASE=dispatch" \
-  "COSMOS_CONTAINER=tasks" \
-  "AZURE_TENANT_ID=your_tenant_id" \
-  "AZURE_CLIENT_ID=your_client_id" \
-  "ALLOWED_ORIGINS=*"
+```bash
+az functionapp config appsettings set   --name dispatch-api-YOURNAME   --resource-group dispatch-rg   --settings   "AZURE_OPENAI_ENDPOINT=https://dispatch-openai.openai.azure.com/"   "AZURE_OPENAI_KEY=your_actual_key"   "AZURE_OPENAI_DEPLOYMENT=gpt-4o"   "GROQ_API_KEY=your_groq_key_if_needed"   "COSMOS_ENDPOINT=https://dispatch-cosmos-yourname.documents.azure.com:443/"   "COSMOS_KEY=your_actual_cosmos_key"   "COSMOS_DATABASE=dispatch"   "COSMOS_CONTAINER=tasks"   "AZURE_TENANT_ID=your_tenant_id"   "AZURE_CLIENT_ID=your_client_id"   "AZURE_CLIENT_SECRET=your_client_secret"   "ALLOWED_ORIGINS=*"
 ```
 
 ---
 
 ## Deploy the Backend
 
-```
+```bash
 cd dispatch/backend
 func azure functionapp publish dispatch-api-YOURNAME
 ```
 
-Takes ~2 minutes. At the end you'll see:
-```
-Functions in dispatch-api-YOURNAME:
-    preMeetingBrief - [httpTrigger]
-    postMeetingProcess - [httpTrigger]
-    ...
-```
+Takes ~2 minutes. At the end you'll see the functions listed in the terminal.
 
 Your API is now live at: `https://dispatch-api-YOURNAME.azurewebsites.net/api`
 
@@ -290,11 +315,8 @@ Your API is now live at: `https://dispatch-api-YOURNAME.azurewebsites.net/api`
 
 ## Create the Static Web App for the Frontend
 
-```
-az staticwebapp create \
-  --name dispatch-frontend \
-  --resource-group dispatch-rg \
-  --location eastus2
+```bash
+az staticwebapp create   --name dispatch-frontend   --resource-group dispatch-rg   --location eastus2
 ```
 
 ---
@@ -303,9 +325,8 @@ az staticwebapp create \
 
 Open `dispatch/frontend/.env` and change the API URL:
 
-```
+```env
 REACT_APP_CLIENT_ID=your_client_id
-REACT_APP_TENANT_ID=your_tenant_id
 REACT_APP_API_URL=https://dispatch-api-YOURNAME.azurewebsites.net/api
 ```
 
@@ -313,31 +334,21 @@ REACT_APP_API_URL=https://dispatch-api-YOURNAME.azurewebsites.net/api
 
 ## Build and Deploy the Frontend
 
-```
+```bash
 cd dispatch/frontend
 npm run build
 ```
 
 Wait ~1 minute for the build to complete. Then:
 
-```
+```bash
 npm install -g @azure/static-web-apps-cli
 swa login
 ```
 
-Another browser window for auth. Then:
+Then deploy:
 
-```
-swa deploy ./build --deployment-token $(az staticwebapp secrets list --name dispatch-frontend --resource-group dispatch-rg --query "properties.apiKey" --output tsv)
-```
-
-Or simpler — get the deployment token from the portal:
-1. Azure Portal → Static Web Apps → dispatch-frontend
-2. Left sidebar → **Manage deployment token**
-3. Copy the token
-
-Then:
-```
+```bash
 swa deploy ./build --deployment-token PASTE_TOKEN_HERE --env production
 ```
 
@@ -356,11 +367,8 @@ Your live URL will print at the end: `https://something.azurestaticapps.net`
 
 ## Add CORS to Function App
 
-```
-az functionapp cors add \
-  --name dispatch-api-YOURNAME \
-  --resource-group dispatch-rg \
-  --allowed-origins "https://your-app-name.azurestaticapps.net"
+```bash
+az functionapp cors add   --name dispatch-api-YOURNAME   --resource-group dispatch-rg   --allowed-origins "https://your-app-name.azurestaticapps.net"
 ```
 
 ---
@@ -373,7 +381,7 @@ Test the production URL in your browser — same flow as local testing.
 
 ## Microsoft Teams Sideloading
 
-Run Dispatch inside Microsoft Teams as a personal app (no deployment needed for local demo).
+Run Dispatch inside Microsoft Teams as a personal app.
 
 ### 1. Ensure HTTPS is on
 
@@ -392,14 +400,14 @@ Edit `teams-manifest/manifest.json` — set all URLs to `https://localhost:3000`
 ```bash
 cd teams-manifest
 # On Windows:
-Compress-Archive -Path manifest.json, icon-color.png, icon-outline.png -DestinationPath dispatch-manifest.zip
+Compress-Archive -Path manifest.json, <icon-files> -DestinationPath dispatch-manifest.zip
 # On Mac/Linux:
-zip dispatch-manifest.zip manifest.json icon-color.png icon-outline.png
+zip dispatch-manifest.zip manifest.json <icon-files>
 ```
 
 In Microsoft Teams → **Apps** → **Manage your apps** → **Upload a custom app** → select `dispatch-manifest.zip`.
 
-Dispatch appears as a personal app with four tabs: Daily View, Pre-Call Brief, Post-Call, Thread Catch-Up.
+Dispatch appears as a personal app with five tabs: Daily View, Pre-Call Brief, Post-Call, Thread Catch-Up, and Projects.
 
 ---
 
@@ -409,19 +417,42 @@ All endpoints require `Authorization: Bearer <access_token>`. The token is the M
 
 | Method | Route | Description |
 |---|---|---|
-| GET | `/api/get-events` | Calendar events for the next 7 days |
-| GET | `/api/get-inbox` | Recent inbox messages |
+| GET | `/api/events` | Calendar events for today and the next 7 days |
+| GET | `/api/inbox?limit=` | Recent inbox message threads |
 | GET | `/api/pre-meeting-brief?eventId=` | AI pre-call brief for a specific event |
-| POST | `/api/post-meeting-process` | Process transcript → action items + drafts |
-| GET | `/api/thread-catchup?conversationId=` | 3-line email thread summary |
+| POST | `/api/post-meeting-process` | Process transcript → follow-ups, drafts, effectiveness, engagement |
+| GET / POST | `/api/thread-catchup` | 3-line email thread summary |
+| POST | `/api/projects-summary` | Cluster inbox threads into project summaries |
 | GET | `/api/daily-todos` | AI-prioritised daily view |
 | POST | `/api/approve-item` | Approve an item from the queue |
+| POST | `/api/meeting-notes` | Generate polished speaking points |
+| GET | `/api/project-details?threadId=&projectName=&nextMeetingId=` | Full project detail view |
+| GET | `/api/unresolved-issues?limit=` | Recent unresolved issues |
+| GET | `/api/handover-report?threadId=&projectName=` | Generate a project handover PDF |
 
 **POST /api/post-meeting-process body:**
 ```json
 {
-  "transcript": "Full meeting transcript text...",
-  "eventId": "optional calendar event ID"
+  "meetingId": "optional meeting ID",
+  "eventId": "optional calendar event ID",
+  "transcript": "Full meeting transcript text..."
+}
+```
+
+**POST /api/meeting-notes body:**
+```json
+{
+  "eventId": "optional calendar event ID",
+  "meetingTitle": "Meeting title",
+  "language": "English",
+  "agenda": [],
+  "followUpItems": [],
+  "openPoints": [],
+  "keyContext": "",
+  "currentStatus": "",
+  "questions": [],
+  "answers": {},
+  "additionalNotes": ""
 }
 ```
 
@@ -438,13 +469,15 @@ All endpoints require `Authorization: Bearer <access_token>`. The token is the M
 
 ## Key Design Decisions
 
-**"Dispatch proposes, humans decide"** — Every AI output (tasks, email drafts, calendar invites) goes into an approval queue before any action is taken in Microsoft 365. Nothing executes without explicit user approval.
+**"Dispatch proposes, humans decide"** — Every AI output (drafts, follow-ups, reminders, calendar invites) goes into an approval queue before any action is taken in Microsoft 365. Nothing executes without explicit user approval.
 
-**Personal account compatibility** — Microsoft Graph personal accounts (`live.com`, `outlook.com`) reject many `$filter` query operators that work for organisational accounts. Dispatch fetches emails without server-side filters and filters client-side. Auth authority is set to `/common` rather than a tenant-specific URL.
+**Common authority** — The frontend uses the Microsoft `common` authority directly, so the same sign-in flow works with personal and organisational Microsoft accounts.
 
-**Single past meeting, not multiple** — The pre-call brief surfaces only the single most relevant past meeting (highest score by attendee overlap and keyword match). Multiple past meetings created noise. One clearly attributed meeting is more useful than three vaguely relevant ones.
+**Project-first context** — The projects tab clusters inbox threads and meetings into a graph, then loads project details lazily when you open a project. That keeps the main view lighter while still giving deep context on demand.
 
-**Cosmos DB serverless in Korea Central** — Azure for Students restricts available regions. Supported regions for this subscription: `koreacentral`, `eastasia`, `malaysiawest`, `uaenorth`, `austriaeast`.
+**Jira-aware briefs** — The pre-call brief pulls in Jira-linked issues and flags cases where email updates and Jira status do not match.
+
+**Standalone and Teams-ready** — The app runs as a normal web app for local development and can also be sideloaded into Microsoft Teams for demo use.
 
 ---
 
@@ -454,13 +487,17 @@ All endpoints require `Authorization: Bearer <access_token>`. The token is the M
 
 | Variable | Where to get it |
 |---|---|
-| `OPENAI_API_KEY` | github.com/marketplace/models → Get API key |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint |
+| `AZURE_OPENAI_KEY` | Azure OpenAI key |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI deployment name |
+| `GROQ_API_KEY` | Groq API key, if using fallback |
 | `COSMOS_ENDPOINT` | Azure Portal → Cosmos DB → Keys → URI |
 | `COSMOS_KEY` | Azure Portal → Cosmos DB → Keys → Primary Key |
 | `COSMOS_DATABASE` | `dispatch` (default) |
 | `COSMOS_CONTAINER` | `tasks` (default) |
 | `AZURE_TENANT_ID` | Azure Portal → App Registration → Overview |
 | `AZURE_CLIENT_ID` | Azure Portal → App Registration → Overview |
+| `AZURE_CLIENT_SECRET` | Azure Portal → App Registration → Certificates & secrets |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` for local dev |
 
 ### Frontend (`.env`)
@@ -468,16 +505,14 @@ All endpoints require `Authorization: Bearer <access_token>`. The token is the M
 | Variable | Value |
 |---|---|
 | `REACT_APP_CLIENT_ID` | App Registration client ID |
-| `REACT_APP_TENANT_ID` | `common` (not your tenant ID) |
 | `REACT_APP_API_URL` | `http://localhost:7071/api` |
 | `HTTPS` | `true` (required for Teams sideloading) |
-
 
 ---
 
 ## Team
 
 **Icebreakers — IIT Madras**  
-Contact: da25s009@smail.iitm.ac.in  
+Contact: da25s009@smail.iitm.ac.in
 
-Built for Microsoft AI Unlocked Phase 2, March 2026.
+Built for Microsoft AI Unlocked Phase 5, March 2026.
