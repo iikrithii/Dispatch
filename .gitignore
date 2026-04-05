@@ -1,29 +1,86 @@
+# ----------------------
+# Python
+# ----------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ----------------------
+# Virtual Environments
+# ----------------------
+venv/
+env/
+ENV/
+
+# ----------------------
 # Node
+# ----------------------
 node_modules/
 
-# Env files
+# ----------------------
+# Environment / Secrets
+# ----------------------
 .env
 .env.*
+config.py
 
+# ----------------------
+# Transcript / Output Files
+# ----------------------
+transcript.txt
+bot_output.txt
+*.txt
+
+# ----------------------
+# Debug Screenshots
+# ----------------------
+debug_step1.png
+debug_step2.png
+debug_step3.png
+
+# ----------------------
+# Speaker Data
+# ----------------------
+speaker_names.json
+
+# ----------------------
+# Whisper / ML Models
+# ----------------------
+~/.cache/huggingface/
+*.bin
+*.pt
+
+# ----------------------
 # Azure / Azurite
+# ----------------------
 backend/AzuriteConfig/
 backend/__azurite_db_*.json
 backend/__blobstorage__/
-
-# Local settings (contains secrets)
 backend/local.settings.json
 
+# ----------------------
 # Logs
+# ----------------------
 *.log
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Build
+# ----------------------
+# Build Artifacts
+# ----------------------
 dist/
 build/
 
-# IDE
+# ----------------------
+# IDEs / Editors
+# ----------------------
 .vscode/
 .idea/
+*.iml
+
+# ----------------------
+# OS Files
+# ----------------------
+.DS_Store
+Thumbs.db
+desktop.ini
