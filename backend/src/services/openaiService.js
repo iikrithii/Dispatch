@@ -564,6 +564,222 @@ ${threadList}
 Generate the handover report JSON now.`, 0.2);
 }
 
+// ─────────────────────────────────────────────
+// COMMITMENT INTELLIGENCE (Live Co-Pilot)
+// ─────────────────────────────────────────────
+
+async function checkCommitmentsWithAI({ transcript, context }) {
+  const systemPrompt = `You are Dispatch's Commitment Intelligence engine.
+
+Analyse a meeting transcript snippet and:
+1. Extract every commitment, deadline, or deliverable being proposed or agreed to.
+2. Evaluate feasibility based on the calendar load and pending tasks provided.
+3. Suggest a realistic alternative when feasibility is risky or unrealistic.
+4. List specific calendar conflicts causing the problem.
+
+Feasibility scale:
+- "clear"       -> Plenty of time, no conflicts
+- "tight"       -> Achievable but little buffer
+- "risky"       -> Conflicts exist, likely to slip
+- "unrealistic" -> Not achievable given current load
+
+Rules:
+- If no owner is mentioned, assume "You".
+- Always fill the suggestion field.
+- Return strict JSON only. No markdown, no explanation outside JSON.
+
+Return valid JSON matching exactly this schema:
+{
+  "commitments": [
+    {
+      "raw": "exact phrase from transcript",
+      "owner": "You | Person Name",
+      "deadline": "YYYY-MM-DD or null",
+      "deadlineLabel": "e.g. Tuesday EOD",
+      "feasibility": "clear | tight | risky | unrealistic",
+      "reason": "1-2 sentences referencing actual calendar load",
+      "suggestion": "Concrete counter-proposal or confirmation",
+      "conflicts": [
+        { "title": "Meeting title", "time": "Day HH:MM-HH:MM" }
+      ]
+    }
+  ]
+}`;
+
+  const userContent = `Today's date: ${new Date().toISOString().slice(0, 10)}
+
+## Meeting Context and Calendar Load
+${context}
+
+## Transcript Snippet to Analyse
+${transcript}
+
+Extract all commitments. Evaluate feasibility. Return JSON only.`;
+
+  return complete(systemPrompt, userContent, 0.2);
+}
+// ─────────────────────────────────────────────
+// CONTEXT WHISPERS
+// Surfaces relevant past context when a topic comes up.
+// Flags contradictions against previously agreed decisions.
+// ─────────────────────────────────────────────
+
+async function generateContextWhisper({ transcript, context }) {
+  const systemPrompt = `You are Dispatch's Context Whisper engine.
+
+A user is in a live meeting. A topic has just come up in the transcript snippet.
+Your job is to:
+1. Identify what topic or subject is being discussed.
+2. Surface the most relevant context from past meetings, emails, or decisions provided.
+3. Flag any CONTRADICTIONS — where what is being said now deviates from what was previously agreed.
+
+Return valid JSON only — no markdown, no commentary:
+{
+  "topic": "brief label for what is being discussed",
+  "whispers": [
+    {
+      "type": "context" | "decision" | "contradiction" | "action_item",
+      "content": "the relevant piece of information",
+      "source": "e.g. Past meeting Apr 1 | Email from Robin | Decision in Sprint Review",
+      "relevanceReason": "one sentence — why this is relevant right now"
+    }
+  ],
+  "contradictions": [
+    {
+      "currentStatement": "what is being said now",
+      "previousAgreement": "what was agreed before",
+      "source": "where the previous agreement came from",
+      "severity": "high" | "medium" | "low"
+    }
+  ],
+  "hasContradiction": boolean
+}
+
+Rules:
+- Maximum 3 whispers. Pick only the most relevant.
+- Maximum 2 contradictions.
+- If nothing relevant found, return empty arrays and hasContradiction: false.
+- Be specific — reference actual names, dates, numbers from the context provided.
+- whisper type "contradiction" should ONLY be used when there is a direct conflict.`;
+
+  const userContent = `Today's date: ${new Date().toISOString().slice(0, 10)}
+
+## Past Meeting History, Decisions, and Email Context
+${context}
+
+## Live Transcript Snippet (what is being said RIGHT NOW)
+${transcript}
+
+Surface relevant context and flag any contradictions. Return JSON only.`;
+
+  return complete(systemPrompt, userContent, 0.2);
+}
+
+// ─────────────────────────────────────────────
+// FOCUS RECOVERY (Zone-Out Assist)
+// Tells the user what they missed and what is expected of them.
+// ─────────────────────────────────────────────
+
+async function generateFocusRecovery({ transcript, userName, context }) {
+  const systemPrompt = `You are Dispatch's Focus Recovery engine.
+
+A meeting participant has zoned out or stepped away. You are given the last portion of the meeting transcript.
+Your job is to:
+1. Summarise what was just discussed in plain language.
+2. Identify if anything was directed at or expected from the user specifically.
+3. Give them exactly what they need to re-engage without friction.
+
+Return valid JSON only — no markdown, no commentary:
+{
+  "catchUpSummary": "2-3 sentences — what happened while they were zoned out",
+  "currentTopic": "one line — what is being discussed RIGHT NOW",
+  "directedAtUser": boolean,
+  "whatWasAsked": "exact question or task directed at the user, or null if nothing directed at them",
+  "suggestedResponse": "a ready-to-use response they can say immediately, or null if nothing is expected",
+  "missedDecisions": [
+    "any decisions made while they were out — max 3"
+  ],
+  "missedActionItems": [
+    { "owner": "person name", "task": "what they committed to" }
+  ]
+}
+
+Rules:
+- Keep catchUpSummary under 60 words.
+- suggestedResponse should be natural spoken language, not formal.
+- If the user's name appears in the transcript with a question or task, set directedAtUser to true.
+- missedDecisions and missedActionItems max 3 each.`;
+
+  const userContent = `Today's date: ${new Date().toISOString().slice(0, 10)}
+User's name: ${userName || "the user"}
+
+## Meeting Background Context
+${context}
+
+## Transcript from the last 60 seconds (what the user missed)
+${transcript}
+
+Generate the focus recovery briefing now. Return JSON only.`;
+
+  return complete(systemPrompt, userContent, 0.2);
+}
+
+// ─────────────────────────────────────────────
+// LIVE CONTEXT DRIFT DETECTION
+// Detects when discussion moves away from intended agenda.
+// ─────────────────────────────────────────────
+
+async function detectContextDrift({ transcript, agenda, context }) {
+  const systemPrompt = `You are Dispatch's Context Drift Detection engine.
+
+A meeting is in progress. You are given the intended agenda and the current transcript.
+Your job is to detect if the discussion has drifted away from the agenda and suggest a gentle nudge to bring it back.
+
+Return valid JSON only — no markdown, no commentary:
+{
+  "driftDetected": boolean,
+  "driftScore": number,
+  "currentTopic": "what is actually being discussed right now",
+  "expectedTopic": "what should be discussed based on the agenda",
+  "driftReason": "one sentence explaining how and why the discussion drifted, or null if no drift",
+  "nudge": "a gentle, professional suggestion to redirect the conversation, or null if no drift",
+  "agendaProgress": [
+    {
+      "item": "agenda item text",
+      "status": "completed" | "in_progress" | "not_started" | "skipped"
+    }
+  ],
+  "timeRisk": "on_track" | "at_risk" | "behind",
+  "timeRiskReason": "one sentence on time risk, or null if on track"
+}
+
+Rules:
+- driftScore: 0-100. 0 = perfectly on agenda. 100 = completely off topic.
+- driftDetected = true if driftScore >= 40.
+- nudge should be a suggestion a facilitator could say out loud — natural, not robotic.
+- agendaProgress tracks ALL agenda items based on transcript evidence.
+- timeRisk: "at_risk" if a major item hasn't started and time seems short. "behind" if items clearly skipped.`;
+
+  const userContent = `Today's date: ${new Date().toISOString().slice(0, 10)}
+
+## Intended Meeting Agenda
+${agenda}
+
+## Meeting Background Context
+${context}
+
+## Current Transcript (recent portion of the meeting)
+${transcript}
+
+Detect drift and generate nudge if needed. Return JSON only.`;
+
+  return complete(systemPrompt, userContent, 0.2);
+}
+
+// ─────────────────────────────────────────────
+// ADD THESE TO module.exports:
+
+// ─────────────────────────────────────────────
 module.exports = {
   generatePreCallBrief,
   processPostCall,
@@ -574,4 +790,10 @@ module.exports = {
   generateSpeakingPoints,
   detectUnresolvedIssues,
   generateHandoverReport,
+  checkCommitmentsWithAI, 
+  generateContextWhisper,
+generateFocusRecovery,
+detectContextDrift,
 };
+
+

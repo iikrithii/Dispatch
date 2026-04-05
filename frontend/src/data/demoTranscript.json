@@ -1,0 +1,335 @@
+{
+  "meetingId": "mock-ci-demo-001",
+  "meetingTitle": "Q2 Investment Planning — Action & Delivery Review",
+  "date": "2026-04-05",
+  "duration": "42 minutes",
+  "participants": ["Sanjeev", "Robin", "Akshay", "Krithi"],
+  "context": {
+    "note": "This transcript is designed to trigger Commitment Intelligence. Each highlighted segment contains a commitment or deadline. The AI should evaluate these against the user's calendar and flag conflicts, unrealistic timelines, and suggest alternatives.",
+    "knownCalendarLoad": {
+      "2026-04-07": "Tuesday — Sanjeev has 3 back-to-back meetings: Product Sync 10am, Investor Call 1pm, Team Standup 4pm. 5.5 hours blocked.",
+      "2026-04-08": "Wednesday — Akshay has Sprint Planning 10am-12pm and a Design Review 2pm-4pm. Robin is free most of the day.",
+      "2026-04-09": "Thursday — Sanjeev has an all-day offsite. Krithi has Legal Review 11am and Client Demo 3pm.",
+      "2026-04-10": "Friday — Akshay has half day leave. Robin has a 9am-11am Finance Sync.",
+      "2026-04-14": "Tuesday next week — Full team has Quarterly Business Review 9am-1pm (4 hours).",
+      "2026-04-16": "Thursday next week — Sanjeev travelling to Bangalore. Robin has Board Prep call 2pm."
+    },
+    "pendingTasks": [
+      "Sanjeev: Review and sign 3 pending vendor contracts (estimated 4 hours of work)",
+      "Robin: Complete Q1 expense reconciliation report (in progress, 2 days of work remaining)",
+      "Akshay: Fix 4 critical bugs in the portfolio tracker before next investor demo",
+      "Krithi: Finalise term sheets for 2 investee companies"
+    ]
+  },
+  "transcript": [
+    {
+      "time": "00:00:08",
+      "speaker": "Sanjeev",
+      "text": "Alright let's get into it. We've got a lot of delivery commitments that need to be locked down today. I want to make sure everyone leaves this call with clear deadlines."
+    },
+    {
+      "time": "00:00:22",
+      "speaker": "Robin",
+      "text": "Agreed. Before we start assigning things, can I flag that this week is already really heavy? I have the Q1 expense reconciliation that's still in progress and it's taking longer than expected."
+    },
+    {
+      "time": "00:00:38",
+      "speaker": "Akshay",
+      "text": "Same here. I've got four critical bugs to fix before the investor demo. But let's see what comes up — some of this might be quick."
+    },
+    {
+      "time": "00:00:50",
+      "speaker": "Sanjeev",
+      "text": "Okay noted. Let's go item by item. First — the Edelweiss term sheet. Krithi, you said you'd have it ready for my review. When can I expect it?"
+    },
+    {
+      "time": "00:01:02",
+      "speaker": "Krithi",
+      "text": "I can send it to you today itself. The document is almost ready."
+    },
+    {
+      "time": "00:01:10",
+      "speaker": "Sanjeev",
+      "text": "Perfect. And Sanjeev can you turn around the review and sign-off by tomorrow end of day? Tuesday?"
+    },
+    {
+      "time": "00:01:19",
+      "speaker": "Robin",
+      "text": "Sanjeev — that's tomorrow Tuesday. You have the Product Sync at 10, the Investor Call at 1pm, and the Team Standup at 4. That's your whole day blocked."
+    },
+    {
+      "time": "00:01:32",
+      "speaker": "Sanjeev",
+      "text": "Oh that's right. I forgot about the investor call. Okay fine — I'll do it by Wednesday then. Wednesday EOD."
+    },
+    {
+      "time": "00:01:42",
+      "speaker": "Krithi",
+      "text": "Sanjeev, the Edelweiss subscription window closes April 12th. That's Sunday. If you sign off Wednesday, we lose two days for processing. It's cutting it really close. Any chance you can do it Thursday?"
+    },
+    {
+      "time": "00:01:58",
+      "speaker": "Sanjeev",
+      "text": "Thursday I'm at the offsite all day. Not possible."
+    },
+    {
+      "time": "00:02:08",
+      "speaker": "Krithi",
+      "text": "Then Wednesday is our only option. Sanjeev can you block 90 minutes Wednesday morning specifically for this? Before your calendar fills up?"
+    },
+    {
+      "time": "00:02:19",
+      "speaker": "Sanjeev",
+      "text": "Yes. I'll block Wednesday 9am to 10:30am for the term sheet review. Krithi send it to me before you sleep tonight."
+    },
+    {
+      "time": "00:02:31",
+      "speaker": "Krithi",
+      "text": "Done. Sending tonight."
+    },
+    {
+      "time": "00:02:40",
+      "speaker": "Robin",
+      "text": "Okay next item. The investor portfolio update deck. Akshay you said you'd own the first draft. What's the delivery date?"
+    },
+    {
+      "time": "00:02:52",
+      "speaker": "Akshay",
+      "text": "I was thinking April 14th for the first draft."
+    },
+    {
+      "time": "00:03:02",
+      "speaker": "Robin",
+      "text": "Akshay — April 14th is the Quarterly Business Review. We're all in that from 9 to 1. You'll be in back to back sessions all morning. Are you sure you can have a full draft ready same day?"
+    },
+    {
+      "time": "00:03:18",
+      "speaker": "Akshay",
+      "text": "Hmm. I didn't realise the QBR was that day. Okay maybe I can do it the evening of the 14th? Like 6pm?"
+    },
+    {
+      "time": "00:03:29",
+      "speaker": "Sanjeev",
+      "text": "That's risky Akshay. If the QBR runs long or throws up new discussion points, you'll be scrambling. Can we say April 13th instead — that's Monday — and it gives Krithi and Robin more time to review before the 20th deadline."
+    },
+    {
+      "time": "00:03:47",
+      "speaker": "Akshay",
+      "text": "April 13th is a Monday. I think I can do that. But I'll need the final portfolio numbers from Robin before I can start building the deck. Robin when can you get me the numbers?"
+    },
+    {
+      "time": "00:04:02",
+      "speaker": "Robin",
+      "text": "I need to finish the Q1 reconciliation first before I can pull clean numbers. I can get you the numbers by Friday — April 10th."
+    },
+    {
+      "time": "00:04:14",
+      "speaker": "Akshay",
+      "text": "Robin — Friday you have the Finance Sync in the morning. And I have half day leave Friday. So if you send Friday afternoon, I won't be able to look at it until Monday morning. And then I need a full day to build the deck, which means I'm delivering Monday evening at best. That's tight for a Monday April 13th deadline."
+    },
+    {
+      "time": "00:04:36",
+      "speaker": "Robin",
+      "text": "Fair point. What if I push to get the numbers to you Thursday evening? April 9th? I'll have to stay a bit late but it's doable."
+    },
+    {
+      "time": "00:04:49",
+      "speaker": "Krithi",
+      "text": "Robin, Thursday I have the Legal Review at 11 and a Client Demo at 3. If you're pulling numbers while managing those calls too, Thursday evening might be stressful. Is Wednesday a possibility?"
+    },
+    {
+      "time": "00:05:04",
+      "speaker": "Robin",
+      "text": "Wednesday I'm freer. Let me try to get you the numbers Wednesday EOD Akshay. That gives you Thursday and the weekend to build the deck."
+    },
+    {
+      "time": "00:05:17",
+      "speaker": "Akshay",
+      "text": "Wednesday EOD numbers, deck ready by Sunday night April 13th — I mean Sunday the 12th, so it's ready first thing Monday the 13th. That works. Locked."
+    },
+    {
+      "time": "00:05:33",
+      "speaker": "Sanjeev",
+      "text": "Good. Krithi, you're adding the alternatives commentary to the deck. When are you doing that?"
+    },
+    {
+      "time": "00:05:42",
+      "speaker": "Krithi",
+      "text": "I'll review Akshay's draft and add my section by April 16th. Thursday."
+    },
+    {
+      "time": "00:05:51",
+      "speaker": "Robin",
+      "text": "Krithi, April 16th I have the Board Prep call at 2pm and Sanjeev is travelling. If there's any feedback loop needed on your commentary, we won't be able to action it easily that day."
+    },
+    {
+      "time": "00:06:06",
+      "speaker": "Krithi",
+      "text": "Good point. Let me aim for April 15th Wednesday instead. That gives everyone Thursday to review before Robin does the final pass."
+    },
+    {
+      "time": "00:06:19",
+      "speaker": "Robin",
+      "text": "Works for me. I'll do the final proofread and formatting on April 17th Friday and it goes to investors on the 20th Monday."
+    },
+    {
+      "time": "00:06:31",
+      "speaker": "Sanjeev",
+      "text": "Perfect. Now the SMID stock shortlist. Krithi, you said you'd research 4 or 5 names with detailed rationale. When can we expect that note?"
+    },
+    {
+      "time": "00:06:45",
+      "speaker": "Krithi",
+      "text": "I'll have it ready by next Friday — April 17th."
+    },
+    {
+      "time": "00:06:54",
+      "speaker": "Sanjeev",
+      "text": "Krithi — you already have the term sheet tonight, alternatives commentary by April 15th, and two investee company term sheets that are pending. April 17th is a lot for one person in one week. Are you sure you can do the SMID note by then too?"
+    },
+    {
+      "time": "00:07:14",
+      "speaker": "Krithi",
+      "text": "Honestly when you list it like that... the SMID note is the least urgent of those. Can I push it to April 22nd instead?"
+    },
+    {
+      "time": "00:07:26",
+      "speaker": "Sanjeev",
+      "text": "April 22nd works. The SMID deployment isn't happening until May anyway."
+    },
+    {
+      "time": "00:07:35",
+      "speaker": "Akshay",
+      "text": "On the Infosys rebalancing — Sanjeev you were going to confirm by Monday 10am so I can execute before my 2pm block. Is that still the plan?"
+    },
+    {
+      "time": "00:07:48",
+      "speaker": "Sanjeev",
+      "text": "Yes Monday 10am confirmation from me, you execute before 2pm. That's locked."
+    },
+    {
+      "time": "00:07:57",
+      "speaker": "Robin",
+      "text": "Sanjeev, Monday you also have to review those three vendor contracts that have been sitting. The legal team is chasing. Can you do both the rebalancing confirmation and the contracts in the morning?"
+    },
+    {
+      "time": "00:08:12",
+      "speaker": "Sanjeev",
+      "text": "Okay that's a problem. The contracts alone will take me 3 to 4 hours. I can't do contracts and the rebalancing review both before 10am Monday."
+    },
+    {
+      "time": "00:08:27",
+      "speaker": "Akshay",
+      "text": "Can I push the execution to Tuesday? Or does that mess up the market timing?"
+    },
+    {
+      "time": "00:08:37",
+      "speaker": "Robin",
+      "text": "Tuesday Sanjeev is blocked all day — Product Sync, Investor Call, Standup. He can't do a meaningful review Tuesday either."
+    },
+    {
+      "time": "00:08:49",
+      "speaker": "Sanjeev",
+      "text": "What if I spend Sunday evening on the vendor contracts — they're not complicated, just long. Then Monday morning I'm free for the rebalancing confirmation. That way Akshay can execute Monday before 2pm as planned."
+    },
+    {
+      "time": "00:09:06",
+      "speaker": "Akshay",
+      "text": "That works. Sunday contracts, Monday 10am confirmation, Monday execution before 2pm. Locked."
+    },
+    {
+      "time": "00:09:18",
+      "speaker": "Robin",
+      "text": "And the deployment schedule — Akshay you said you'd send the monthly corpus deployment plan to me by Friday noon. Is that still realistic given your half day leave Friday?"
+    },
+    {
+      "time": "00:09:32",
+      "speaker": "Akshay",
+      "text": "Half day leave means I'm off from 1pm. So Friday noon is literally right at my cutoff. Let me send it Thursday evening instead to be safe."
+    },
+    {
+      "time": "00:09:44",
+      "speaker": "Robin",
+      "text": "Thursday evening works. I'll update the cash flow model over the weekend."
+    },
+    {
+      "time": "00:09:53",
+      "speaker": "Sanjeev",
+      "text": "Good. Last one — CA call for the advance tax discussion. Robin you were setting that up for the first week of May."
+    },
+    {
+      "time": "00:10:04",
+      "speaker": "Robin",
+      "text": "Yes I'll schedule it for May 5th or 6th. I'll coordinate with the CA and share a calendar invite with everyone by next week."
+    },
+    {
+      "time": "00:10:16",
+      "speaker": "Sanjeev",
+      "text": "Good. Let me do a final summary of what we've locked. Krithi sends term sheet tonight. Sanjeev blocks Wednesday 9am for review and signs off Wednesday before noon. Robin delivers portfolio numbers to Akshay by Wednesday EOD. Akshay delivers investor deck draft by Sunday night April 12th. Krithi adds alternatives commentary by April 15th Wednesday. Robin does final review April 17th, deck goes to investors April 20th. Krithi's SMID note pushed to April 22nd. Sanjeev does vendor contracts Sunday, confirms rebalancing Monday 10am. Akshay executes rebalancing before 2pm Monday. Akshay sends deployment schedule Thursday evening. Robin schedules CA call for first week of May."
+    },
+    {
+      "time": "00:10:58",
+      "speaker": "Akshay",
+      "text": "That's a clean list. I'll say this was a much more realistic planning session than usual."
+    },
+    {
+      "time": "00:11:07",
+      "speaker": "Krithi",
+      "text": "Agreed. We actually stress-tested the deadlines instead of just saying yes and scrambling later."
+    },
+    {
+      "time": "00:11:17",
+      "speaker": "Robin",
+      "text": "Same time next week?"
+    },
+    {
+      "time": "00:11:21",
+      "speaker": "Sanjeev",
+      "text": "Yes. Thanks everyone."
+    }
+  ],
+  "commitmentHighlights": [
+    {
+      "segment": "00:01:10 — 00:01:42",
+      "commitment": "Sanjeev to review and sign Edelweiss term sheet by Tuesday EOD",
+      "expectedAIResponse": "RISKY — Tuesday fully blocked. Suggest Wednesday morning instead.",
+      "resolution": "Moved to Wednesday 9am block"
+    },
+    {
+      "segment": "00:02:52 — 00:03:47",
+      "commitment": "Akshay to deliver investor deck draft by April 14th",
+      "expectedAIResponse": "RISKY — QBR blocks entire morning of April 14th. Suggest April 13th Monday.",
+      "resolution": "Moved to April 13th EOD"
+    },
+    {
+      "segment": "00:04:02 — 00:04:49",
+      "commitment": "Robin to deliver portfolio numbers to Akshay by Friday April 10th",
+      "expectedAIResponse": "TIGHT — Robin has Finance Sync Friday morning, Akshay on half day leave. Numbers won't be actionable until Monday. Suggest Wednesday EOD.",
+      "resolution": "Moved to Wednesday EOD"
+    },
+    {
+      "segment": "00:05:42 — 00:06:06",
+      "commitment": "Krithi to add alternatives commentary by April 16th Thursday",
+      "expectedAIResponse": "TIGHT — Board Prep call and Sanjeev travelling makes feedback loop hard. Suggest April 15th Wednesday.",
+      "resolution": "Moved to April 15th"
+    },
+    {
+      "segment": "00:06:45 — 00:07:26",
+      "commitment": "Krithi to deliver SMID note by April 17th",
+      "expectedAIResponse": "UNREALISTIC — Krithi already has term sheet, alternatives commentary, and two investee term sheets in the same period. Suggest April 22nd.",
+      "resolution": "Moved to April 22nd"
+    },
+    {
+      "segment": "00:07:48 — 00:09:06",
+      "commitment": "Sanjeev to confirm Infosys rebalancing by Monday 10am",
+      "expectedAIResponse": "RISKY — 3 vendor contracts also due Monday morning, estimated 4 hours of work. Conflicts with 10am commitment. Suggest doing contracts Sunday.",
+      "resolution": "Contracts moved to Sunday, Monday 10am confirmed"
+    },
+    {
+      "segment": "00:09:18 — 00:09:44",
+      "commitment": "Akshay to send deployment schedule by Friday noon",
+      "expectedAIResponse": "TIGHT — Akshay on half day from 1pm Friday. Noon is cutting it close. Suggest Thursday evening instead.",
+      "resolution": "Moved to Thursday evening"
+    }
+  ]
+}

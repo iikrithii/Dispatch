@@ -1,0 +1,29 @@
+# Node
+node_modules/
+
+# Env files
+.env
+.env.*
+
+# Azure / Azurite
+backend/AzuriteConfig/
+backend/__azurite_db_*.json
+backend/__blobstorage__/
+
+# Local settings (contains secrets)
+backend/local.settings.json
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
