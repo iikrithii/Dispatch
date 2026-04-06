@@ -90,6 +90,11 @@ function normalizeTokens(text = "") {
   return text.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 3);
 }
 
+function toMillis(value) {
+  const parsed = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 /**
  * A record is "rich" if it has real meeting content — not just a pre-call stub.
  * Rich records come from the seed script or from post-call processing.
@@ -183,12 +188,17 @@ async function getPreviousMeetings(userId, attendeeEmails, subjectKeywords, limi
 
   const richAndRelevant = scored
     .filter((r) => r._isRich && r._relevanceScore > 0)
-    .sort((a, b) => b._relevanceScore - a._relevanceScore);
+    .sort((a, b) => {
+      const dateDiff = toMillis(b.startTime || b.date || b.savedAt) - toMillis(a.startTime || a.date || a.savedAt);
+      if (dateDiff !== 0) return dateDiff;
+      return (b._relevanceScore || 0) - (a._relevanceScore || 0);
+    });
 
   console.log("[getPreviousMeetings] richAndRelevant count:", richAndRelevant.length);
   if (richAndRelevant.length > 0) {
-    console.log("[getPreviousMeetings] returning:", richAndRelevant[0].id);
-    return richAndRelevant.slice(0, 1);
+    const take = Math.max(1, Number(limit) || 1);
+    console.log("[getPreviousMeetings] returning:", richAndRelevant.slice(0, take).map((item) => item.id));
+    return richAndRelevant.slice(0, take);
   }
 
   console.log("[getPreviousMeetings] no rich match found — returning empty");

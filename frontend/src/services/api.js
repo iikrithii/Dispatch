@@ -47,6 +47,8 @@ export const getProjectDetails = (threadId, projectName, nextMeetingId) => {
  
 export const getUnresolvedIssues = (limit = 5) =>
   authFetch(`/unresolved-issues?limit=${limit}`);
+
+export const getFocusGraph = () => authFetch("/focus-graph");
  
 // ─────────────────────────────────────────────
 // CALENDAR

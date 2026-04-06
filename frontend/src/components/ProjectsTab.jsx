@@ -1,786 +1,1126 @@
-// src/components/ProjectsTab.jsx
+// src/components/FocusGraphTab.jsx
+// Focus Graph — Live Context Navigator
+// Data source: getFocusGraph() for project list, getProjectDetails() for each project's content
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import {
-  getInbox,
-  getEvents,
-  getProjectsSummary,
-  getProjectDetails,
-  getUnresolvedIssues,
-} from "../services/api";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getFocusGraph, getProjectDetails, getThreadCatchup } from "../services/api";
 
-// ─── Priority colours ────────────────────────────────────────────────────────
-const PRIORITY = {
-  high:   { bg: "#fef2f2", border: "#fca5a5", text: "#b91c1c", dot: "#ef4444" },
-  medium: { bg: "#fffbeb", border: "#fcd34d", text: "#92400e", dot: "#f59e0b" },
-  low:    { bg: "#f0fdf4", border: "#86efac", text: "#166534", dot: "#22c55e" },
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const SCENE = { w: 2400, h: 1800 };
+
+// Node type visual config
+// - meeting: amber (was red, conflicted with overdue tasks)
+// - person: violet (was green, conflicted with completed/on-track tasks)
+const NODE_STYLE = {
+  project: { color: "#111827", bg: "#f8fafc", border: "#94a3b8", ring: "#334155" },
+  meeting: { color: "#92400e", bg: "#fffbeb", border: "#fcd34d", ring: "#f59e0b" },
+  thread:  { color: "#854d0e", bg: "#fefce8", border: "#fde047", ring: "#eab308" },
+  task:    { color: "#1e40af", bg: "#eff6ff", border: "#93c5fd", ring: "#3b82f6" },
+  person:  { color: "#5b21b6", bg: "#f5f3ff", border: "#c4b5fd", ring: "#7c3aed" },
 };
 
-const RISK = {
-  high:   { bg: "#fef2f2", text: "#b91c1c", badge: "#ef4444" },
-  medium: { bg: "#fffbeb", text: "#92400e", badge: "#f59e0b" },
-  low:    { bg: "#f0fdf4", text: "#166534", badge: "#22c55e" },
+// Task urgency colors (override task node style)
+const LANE_STYLE = {
+  critical:  { dot: "#ef4444", bg: "#fff1f2", border: "#fca5a5", text: "#991b1b", label: "Overdue / Blocked" },
+  attention: { dot: "#f97316", bg: "#fff7ed", border: "#fdba74", text: "#9a3412", label: "Due Soon" },
+  watch:     { dot: "#eab308", bg: "#fefce8", border: "#fde047", text: "#854d0e", label: "This Week" },
+  on_track:  { dot: "#22c55e", bg: "#f0fdf4", border: "#86efac", text: "#166534", label: "On Track" },
+  waiting:   { dot: "#6b7280", bg: "#f9fafb", border: "#d1d5db", text: "#374151", label: "Waiting" },
 };
 
-// ─── Node type config — 5 nodes now, unresolved last ─────────────────────────
-const NODE_CONFIG = [
-  { id: "meetings",   label: "Meetings",   icon: "📅", color: "var(--accent)" },
-  { id: "tasks",      label: "Tasks",      icon: "✅", color: "#8b5cf6"       },
-  { id: "people",     label: "People",     icon: "👥", color: "#0891b2"       },
-  { id: "threads",    label: "Threads",    icon: "📧", color: "#059669"       },
-  { id: "unresolved", label: "Unresolved", icon: "🔁", color: "#d97706"       },
-];
+// Cluster anchors relative to scene center
+const CLUSTER = {
+  meeting: { angle: -Math.PI / 2,       radius: 380 }, // top
+  thread:  { angle: Math.PI,             radius: 380 }, // left
+  task:    { angle: 0,                   radius: 380 }, // right
+  person:  { angle: Math.PI / 2,         radius: 380 }, // bottom
+};
 
-import { getHandoverReport } from "../services/api";
+// ─── Utilities ────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main component
-// ─────────────────────────────────────────────────────────────────────────────
-export default function ProjectsTab() {
-  const [projects,          setProjects]          = useState([]);
-  const [unresolvedIssues,  setUnresolvedIssues]  = useState([]);
-  const [loadingProjects,   setLoadingProjects]   = useState(true);
-  const [loadingUnresolved, setLoadingUnresolved] = useState(true);
-  const [error,             setError]             = useState(null);
-  const [meetingCount,      setMeetingCount]      = useState(5);
+function fmt(iso) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  } catch { return ""; }
+}
 
-  // Refs for each project card so banner can scroll to them
-  const projectRefs = useRef({});
+function fmtDue(iso) {
+  if (!iso) return "No deadline";
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = Math.round((d - now) / 86400000);
+    if (diff < 0) return `Overdue by ${Math.abs(diff)}d`;
+    if (diff === 0) return "Due today";
+    if (diff === 1) return "Due tomorrow";
+    return `Due ${d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`;
+  } catch { return iso; }
+}
 
-  // ── Load projects ──
+function slugify(v = "") {
+  return String(v).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "x";
+}
+
+// Normalize a person value (string "Name <email>", object, or plain string)
+function normPerson(v) {
+  if (!v) return null;
+  let name = "", email = "";
+  if (typeof v === "object") {
+    name  = v.name  || v.displayName || "";
+    email = (v.email || v.address || v.emailAddress?.address || "").toLowerCase().trim();
+  } else {
+    const m = String(v).match(/^(.+?)\s*<(.+?)>$/);
+    if (m) { name = m[1].trim(); email = m[2].toLowerCase().trim(); }
+    else if (v.includes("@")) { email = v.toLowerCase().trim(); }
+    else { name = v.trim(); }
+  }
+  // Derive display name from email local part if name is blank
+  if (!name && email) {
+    name = email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  }
+  if (!name && !email) return null;
+  const key = email ? email.split("@")[0].replace(/[._-]+/g, "_") : slugify(name);
+  return { name: name || email, email, key };
+}
+
+// Deduplicate people array
+function dedupePeople(raw = []) {
+  const map = new Map();
+  for (const v of raw) {
+    const p = normPerson(v);
+    if (!p) continue;
+    const existing = map.get(p.key);
+    if (!existing) map.set(p.key, p);
+    else if (!existing.name && p.name) map.set(p.key, { ...existing, name: p.name });
+  }
+  return Array.from(map.values());
+}
+
+// ─── Task Deduplication ───────────────────────────────────────────────────────
+
+/**
+ * Normalize text for similarity comparison: lowercase, remove punctuation,
+ * split to tokens, filter short words.
+ */
+function tokenize(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+}
+
+/**
+ * Jaccard similarity between two token sets.
+ * Returns 0–1. Threshold of 0.35 catches near-duplicates.
+ */
+function jaccardSim(a = [], b = []) {
+  const sa = new Set(a);
+  const sb = new Set(b);
+  let intersection = 0;
+  for (const t of sa) if (sb.has(t)) intersection++;
+  const union = sa.size + sb.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * Given a list of Jira task titles and a meeting task title,
+ * returns true if the meeting task is likely a duplicate of any Jira task.
+ */
+function isDuplicateOfJira(meetingTaskLabel = "", jiraTitles = []) {
+  const meetingTokens = tokenize(meetingTaskLabel);
+  for (const jiraTitle of jiraTitles) {
+    const jiraTokens = tokenize(jiraTitle);
+    if (jaccardSim(meetingTokens, jiraTokens) >= 0.35) return true;
+  }
+  return false;
+}
+
+// ─── Graph Builder ────────────────────────────────────────────────────────────
+
+function buildGraph(projectOption, detail, focusGraphData) {
+  // projectOption: { id, name, status, summary, threadId, nextMeetingId, counts }
+  // detail: { meetings[], pendingTasks[], attendees[], emailThreads[] }
+  // focusGraphData: the full getFocusGraph response (for task urgency etc.)
+
+  const nodes = new Map(); // id → node
+  const edges = [];        // { id, from, to, relation }
+
+  const addNode = (id, type, label, metadata = {}) => {
+    if (!nodes.has(id)) nodes.set(id, { id, type, label, metadata, connections: [] });
+  };
+  const addEdge = (from, to, relation) => {
+    if (!nodes.has(from) || !nodes.has(to)) return;
+    const id = `${from}--${to}`;
+    if (edges.find(e => e.id === id)) return;
+    edges.push({ id, from, to, relation });
+    const fn = nodes.get(from); fn.connections = [...new Set([...fn.connections, to])];
+    const tn = nodes.get(to);   tn.connections = [...new Set([...tn.connections, from])];
+  };
+
+  const projId = `proj:${projectOption.id}`;
+  addNode(projId, "project", projectOption.name, {
+    summary: projectOption.summary || "",
+    status:  projectOption.status  || "on track",
+    threadId: projectOption.threadId,
+    nextMeetingId: projectOption.nextMeetingId,
+  });
+
+  // ── FocusGraph Jira tasks (highest priority, no dedup needed) ──
+  // Collect Jira task titles first so we can deduplicate meeting tasks against them.
+  const fgTasks = (focusGraphData?.tasks || []).filter(t => t.projectName === projectOption.name);
+  const jiraTasks = fgTasks.filter(t => t.sourceKey === "jira");
+  const jiraTitles = jiraTasks.map(t => t.title);
+
+  for (const t of fgTasks) {
+    const tid = `task:fg:${slugify(t.id || t.title || "").slice(0, 40)}`;
+    if (nodes.has(tid)) continue;
+    addNode(tid, "task", t.title, {
+      owner: t.ownerName,
+      dueDate: t.dueDate,
+      lane: t.lane || "on_track",
+      source: t.sourceLabel,
+      status: t.statusText,
+      description: t.description || t.contextSnippet || "",
+      jiraKey: t.context?.jira?.key,
+      jiraUrl: t.context?.jira?.url,
+      isMine: t.isMine,
+      waitingOnOthers: t.waitingOnOthers,
+    });
+    addEdge(tid, projId, "belongs_to");
+    // Link task → thread
+    const taskThread = t.context?.thread;
+    if (taskThread?.conversationId) {
+      const linkedTid = `thread:${slugify(taskThread.conversationId)}`;
+      if (nodes.has(linkedTid)) addEdge(tid, linkedTid, "came_from");
+    }
+    // Link task → meeting
+    const taskMeeting = t.context?.meeting;
+    if (taskMeeting?.subject) {
+      const linkedMid = `meeting:${slugify(taskMeeting.id || taskMeeting.subject)}`;
+      if (nodes.has(linkedMid)) addEdge(tid, linkedMid, "created_in");
+    }
+  }
+
+  // ── Meetings ──
+  for (const m of (detail?.meetings || [])) {
+    const mid = `meeting:${slugify(m.id || m.subject)}`;
+    addNode(mid, "meeting", m.subject || "(Untitled meeting)", {
+      date: m.date,
+      summary: m.summary,
+      actionItems: m.actionItems || [],
+      attendees: m.attendees || [],
+    });
+    addEdge(mid, projId, "belongs_to");
+
+    // Tasks from this meeting — skip if overlaps with a Jira task
+    for (const ai of (m.actionItems || [])) {
+      if (!ai.task) continue;
+      if (isDuplicateOfJira(ai.task, jiraTitles)) continue; // deduplicate
+      const tid = `task:meeting:${mid}:${slugify(ai.task).slice(0, 30)}`;
+      const lane = ai.urgency === "high" ? "critical" : ai.urgency === "medium" ? "watch" : "on_track";
+      addNode(tid, "task", ai.task, {
+        owner: ai.owner,
+        dueDate: ai.deadline,
+        lane,
+        source: "Meeting action item",
+        status: ai.status || "pending",
+        meetingSubject: m.subject,
+        description: ai.task,
+      });
+      addEdge(tid, mid, "created_in");
+      addEdge(tid, projId, "belongs_to");
+    }
+  }
+
+  // ── Threads ──
+  for (const t of (detail?.emailThreads || [])) {
+    const tid = `thread:${slugify(t.conversationId || t.subject)}`;
+    addNode(tid, "thread", t.subject || "(No subject)", {
+      conversationId: t.conversationId,
+      latestDate: t.latestDate,
+      messageCount: t.messageCount,
+      preview: t.bodyPreview || "",
+      participants: t.participantNames || [],
+    });
+    addEdge(tid, projId, "belongs_to");
+  }
+
+  // ── Pending Tasks (from approval queue) — skip Jira duplicates ──
+  for (const t of (detail?.pendingTasks || [])) {
+    const label = t.label || t.data?.title || "Pending task";
+    if (isDuplicateOfJira(label, jiraTitles)) continue; // deduplicate
+    const tid = `task:pending:${slugify(t.id || t.label || "").slice(0, 30)}`;
+    addNode(tid, "task", label, {
+      owner: t.data?.owner || t.data?.person || null,
+      dueDate: t.data?.deadline || null,
+      lane: "watch",
+      source: t.type === "email" ? "Email follow-up" : t.type === "calendar" ? "Calendar" : t.type === "reminder" ? "Reminder" : "Dispatch task",
+      status: "pending",
+      description: t.data?.commitment || t.data?.body || t.label || "",
+      urgencyText: t.data?.urgency,
+    });
+    addEdge(tid, projId, "belongs_to");
+  }
+
+  // ── People ──
+  const peopleRaw = dedupePeople(detail?.attendees?.map(a => ({ name: a.name, email: a.email })) || []);
+  for (const p of peopleRaw) {
+    const pid = `person:${p.key}`;
+    addNode(pid, "person", p.name, {
+      email: p.email,
+      taskCount: detail?.attendees?.find(a => (a.email || "").includes(p.key))?.taskCount || 0,
+    });
+    addEdge(pid, projId, "involved_in");
+  }
+
+  return {
+    projectId: projId,
+    projectName: projectOption.name,
+    nodes: Array.from(nodes.values()),
+    nodeMap: Object.fromEntries(nodes),
+    edges,
+  };
+}
+
+// ─── Layout ───────────────────────────────────────────────────────────────────
+
+function computeLayout(nodes, focusedId) {
+  const cx = SCENE.w / 2, cy = SCENE.h / 2;
+  const pos = {};
+  const focusNode = nodes.find(n => n.id === focusedId);
+  if (!focusNode) {
+    // Default: project at center
+    for (const n of nodes) pos[n.id] = { x: cx, y: cy };
+    return pos;
+  }
+
+  pos[focusedId] = { x: cx, y: cy };
+
+  if (focusNode.type === "project") {
+    // Cluster connected nodes around center by type
+    const byType = {};
+    for (const n of nodes) {
+      if (n.id === focusedId) continue;
+      if (!byType[n.type]) byType[n.type] = [];
+      byType[n.type].push(n);
+    }
+    for (const [type, group] of Object.entries(byType)) {
+      const cluster = CLUSTER[type];
+      if (!cluster) continue;
+      const spread = Math.min(Math.PI * 0.65, (group.length - 1) * 0.35);
+      const startAngle = cluster.angle - spread / 2;
+      group.forEach((n, i) => {
+        const angle = group.length === 1 ? cluster.angle : startAngle + (spread / Math.max(1, group.length - 1)) * i;
+        // Vary radius slightly by index to avoid stacking
+        const r = cluster.radius + (i % 2 === 0 ? 0 : 60) + Math.floor(i / 4) * 80;
+        pos[n.id] = {
+          x: cx + Math.cos(angle) * r,
+          y: cy + Math.sin(angle) * r,
+        };
+      });
+    }
+  } else {
+    // Focused on a non-project node: center it, surround with its neighbors
+    const connected = new Set(focusNode.connections || []);
+    const connectedNodes = nodes.filter(n => n.id !== focusedId && connected.has(n.id));
+    const otherNodes = nodes.filter(n => n.id !== focusedId && !connected.has(n.id));
+
+    connectedNodes.forEach((n, i) => {
+      const angle = (2 * Math.PI * i) / Math.max(1, connectedNodes.length) - Math.PI / 2;
+      pos[n.id] = { x: cx + Math.cos(angle) * 310, y: cy + Math.sin(angle) * 310 };
+    });
+    // Place disconnected nodes further out, faded
+    otherNodes.forEach((n, i) => {
+      const angle = (2 * Math.PI * i) / Math.max(1, otherNodes.length);
+      pos[n.id] = { x: cx + Math.cos(angle) * 620, y: cy + Math.sin(angle) * 620 };
+    });
+  }
+
+  return pos;
+}
+
+// ─── Focus State ─────────────────────────────────────────────────────────────
+
+function getFocusState(graph, focusedId) {
+  if (!graph) return { focusNode: null, visible: new Set(), dimmed: new Set() };
+  const focusNode = graph.nodeMap[focusedId] || graph.nodes.find(n => n.type === "project");
+  if (!focusNode) return { focusNode: null, visible: new Set(), dimmed: new Set() };
+
+  const visible = new Set([focusNode.id]);
+  (focusNode.connections || []).forEach(id => visible.add(id));
+
+  const dimmed = new Set(graph.nodes.filter(n => !visible.has(n.id)).map(n => n.id));
+  return { focusNode, visible, dimmed };
+}
+
+// ─── Node Component ───────────────────────────────────────────────────────────
+
+function GraphNode({ node, pos, isActive, isDimmed, onMouseDown }) {
+  const style = node.type === "task"
+    ? (() => { const l = LANE_STYLE[node.metadata.lane] || LANE_STYLE.on_track; return { color: l.text, bg: l.bg, border: l.border, ring: l.dot }; })()
+    : NODE_STYLE[node.type] || NODE_STYLE.project;
+
+  const typeLabel = node.type === "task"
+    ? (LANE_STYLE[node.metadata.lane]?.label || "Task")
+    : node.type.charAt(0).toUpperCase() + node.type.slice(1);
+
+  const meta = (() => {
+    if (node.type === "meeting") return fmt(node.metadata.date);
+    if (node.type === "thread")  return fmt(node.metadata.latestDate);
+    if (node.type === "task")    return fmtDue(node.metadata.dueDate);
+    if (node.type === "project") return node.metadata.status || "on track";
+    return "";
+  })();
+
+  // Person nodes show name + email handle on separate lines
+  const personEmail = node.type === "person" && node.metadata.email
+    ? node.metadata.email
+    : null;
+
+  const isProject = node.type === "project";
+
+  return (
+    <div
+      className={`fg-node fg-node--${node.type} ${isActive ? "fg-node--active" : ""} ${isDimmed ? "fg-node--dimmed" : ""}`}
+      style={{
+        left: pos.x,
+        top:  pos.y,
+        "--node-bg":     style.bg,
+        "--node-border": isActive ? style.ring : style.border,
+        "--node-color":  style.color,
+        "--node-ring":   style.ring,
+        width: isProject ? 160 : 140,
+      }}
+      onMouseDown={onMouseDown}
+    >
+      {node.type === "task" && (
+        <span className="fg-node__dot" style={{ background: style.ring }} />
+      )}
+      <div className="fg-node__type">{typeLabel}</div>
+      <div className="fg-node__label">{node.label}</div>
+      {personEmail && (
+        <div className="fg-node__email">{personEmail}</div>
+      )}
+      {meta && node.type !== "person" && <div className="fg-node__meta">{meta}</div>}
+    </div>
+  );
+}
+
+// ─── Side Panel ───────────────────────────────────────────────────────────────
+
+function SidePanel({ node, graph, threadState, onGoDeeper, onCopyReply }) {
+  if (!node) {
+    return (
+      <div className="fg-panel__empty">
+        <div className="fg-panel__empty-icon">←</div>
+        <div>Click any node to explore context</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fg-panel__content">
+      {node.type === "project" && <ProjectPanel node={node} graph={graph} onGoDeeper={onGoDeeper} />}
+      {node.type === "thread"  && <ThreadPanel node={node} threadState={threadState} onCopyReply={onCopyReply} graph={graph} />}
+      {node.type === "meeting" && <MeetingPanel node={node} graph={graph} />}
+      {node.type === "person"  && <PersonPanel node={node} graph={graph} />}
+    </div>
+  );
+}
+
+function PanelSection({ title, children }) {
+  return (
+    <div className="fg-panel__section">
+      <div className="fg-panel__section-title">{title}</div>
+      <div className="fg-panel__section-body">{children}</div>
+    </div>
+  );
+}
+
+function ProjectPanel({ node, graph, onGoDeeper }) {
+  const taskNodes = graph.nodes.filter(n => n.type === "task");
+  const byLane = {};
+  for (const t of taskNodes) byLane[t.metadata.lane] = (byLane[t.metadata.lane] || 0) + 1;
+
+  const status = byLane.critical > 0 ? "🔴 Blocked" : byLane.attention > 0 ? "🟠 At risk" : byLane.watch > 0 ? "🟡 Watching" : "🟢 On track";
+
+  return (
+    <>
+      <div className="fg-panel__kicker">Project</div>
+      <div className="fg-panel__title">{node.label}</div>
+      <div className="fg-panel__status">{status}</div>
+
+      <PanelSection title="Summary">
+        {node.metadata.summary || <span className="fg-muted">No summary available.</span>}
+      </PanelSection>
+
+      <PanelSection title="Task breakdown">
+        {Object.entries(LANE_STYLE).map(([lane, s]) => byLane[lane] ? (
+          <div key={lane} className="fg-panel__lane-row">
+            <span className="fg-panel__lane-dot" style={{ background: s.dot }} />
+            <span>{s.label}</span>
+            <span className="fg-panel__lane-count">{byLane[lane]}</span>
+          </div>
+        ) : null)}
+        {!taskNodes.length && <span className="fg-muted">No tasks found.</span>}
+      </PanelSection>
+
+      <PanelSection title="People involved">
+        {graph.nodes.filter(n => n.type === "person").slice(0, 8).map(p => (
+          <div key={p.id} className="fg-panel__person-row">
+            <span className="fg-panel__avatar">{(p.label || "?")[0].toUpperCase()}</span>
+            <div className="fg-panel__person-info">
+              <span className="fg-panel__person-name">{p.label}</span>
+              {p.metadata.email && (
+                <span className="fg-panel__person-email">{p.metadata.email}</span>
+              )}
+            </div>
+          </div>
+        ))}
+        {!graph.nodes.filter(n => n.type === "person").length && <span className="fg-muted">No people surfaced.</span>}
+      </PanelSection>
+
+      <div className="fg-panel__actions">
+        <button
+          className="fg-btn fg-btn--primary"
+          onClick={() => onGoDeeper({ projectName: node.label, threadId: node.metadata.threadId, nextMeetingId: node.metadata.nextMeetingId })}
+        >
+          Open full project view →
+        </button>
+      </div>
+    </>
+  );
+}
+
+function ThreadPanel({ node, threadState, onCopyReply, graph }) {
+  const { conversationId, participants, latestDate, messageCount } = node.metadata;
+  const catchup = threadState?.data?.catchup;
+  const relatedTasks = graph.nodes.filter(n => n.type === "task" && n.connections?.includes(node.id));
+
+  return (
+    <>
+      <div className="fg-panel__kicker">Email Thread</div>
+      <div className="fg-panel__title">{node.label}</div>
+
+      <PanelSection title="Thread info">
+        <div className="fg-panel__info-row"><span>Participants</span><span>{(participants || []).join(", ") || "Unknown"}</span></div>
+        <div className="fg-panel__info-row"><span>Last activity</span><span>{fmt(latestDate) || "Unknown"}</span></div>
+        {messageCount && <div className="fg-panel__info-row"><span>Messages</span><span>{messageCount}</span></div>}
+      </PanelSection>
+
+      <PanelSection title="Summary">
+        {threadState?.loading ? (
+          <span className="fg-muted">Loading thread summary…</span>
+        ) : catchup ? (
+          <div className="fg-panel__thread-summary">
+            {catchup.whatThisIsAbout && <div><strong>What:</strong> {catchup.whatThisIsAbout}</div>}
+            {catchup.whereItStandsNow && <div><strong>Now:</strong> {catchup.whereItStandsNow}</div>}
+            {catchup.whatIsExpectedOfYou && <div><strong>You need to:</strong> {catchup.whatIsExpectedOfYou}</div>}
+          </div>
+        ) : (
+          <span className="fg-muted">{node.metadata.preview || "No thread summary available."}</span>
+        )}
+      </PanelSection>
+
+      <PanelSection title="Commitments from this thread">
+        {relatedTasks.length ? relatedTasks.map(t => (
+          <div key={t.id} className="fg-panel__task-row">
+            <span className="fg-panel__lane-dot" style={{ background: (LANE_STYLE[t.metadata.lane] || LANE_STYLE.on_track).dot }} />
+            {t.label}
+          </div>
+        )) : <span className="fg-muted">No tasks linked to this thread.</span>}
+      </PanelSection>
+
+      {catchup?.suggestedReply && (
+        <div className="fg-panel__actions">
+          <button className="fg-btn fg-btn--primary" onClick={() => onCopyReply(catchup.suggestedReply)}>
+            Draft reply
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MeetingPanel({ node, graph }) {
+  const { date, summary, actionItems = [], attendees = [] } = node.metadata;
+  const open = actionItems.filter(a => a.status !== "done");
+  const done = actionItems.filter(a => a.status === "done");
+  const relatedTasks = graph.nodes.filter(n => n.type === "task" && n.connections?.includes(node.id));
+
+  return (
+    <>
+      <div className="fg-panel__kicker">Meeting</div>
+      <div className="fg-panel__title">{node.label}</div>
+
+      <PanelSection title="Meeting info">
+        <div className="fg-panel__info-row"><span>Date</span><span>{fmt(date) || "Unknown"}</span></div>
+        <div className="fg-panel__info-row">
+          <span>Attendees</span>
+          <span>{attendees.slice(0, 4).map(a => typeof a === "string" ? a.replace(/<.*?>/, "").trim() : a.name || a).join(", ") || "Unknown"}</span>
+        </div>
+      </PanelSection>
+
+      <PanelSection title="Discussion summary">
+        {summary || <span className="fg-muted">No meeting summary available. Run post-call processing to populate.</span>}
+      </PanelSection>
+
+      <PanelSection title="Decisions made">
+        {done.length ? done.map((a, i) => (
+          <div key={i} className="fg-panel__task-row">
+            <span className="fg-panel__check">✓</span> {a.task}
+          </div>
+        )) : <span className="fg-muted">No explicit decisions recorded.</span>}
+      </PanelSection>
+
+      <PanelSection title="Open items">
+        {open.length ? open.map((a, i) => (
+          <div key={i} className="fg-panel__task-row">
+            <span className="fg-panel__owner">{a.owner || "?"}:</span> {a.task}
+          </div>
+        )) : <span className="fg-muted">No open items from this meeting.</span>}
+      </PanelSection>
+
+      <PanelSection title="Follow-up tasks">
+        {relatedTasks.length ? relatedTasks.map(t => (
+          <div key={t.id} className="fg-panel__task-row">
+            <span className="fg-panel__lane-dot" style={{ background: (LANE_STYLE[t.metadata.lane] || LANE_STYLE.on_track).dot }} />
+            {t.label}
+          </div>
+        )) : <span className="fg-muted">No follow-up tasks linked.</span>}
+      </PanelSection>
+    </>
+  );
+}
+
+function PersonPanel({ node, graph }) {
+  const { email, taskCount } = node.metadata;
+  const ownedTasks   = graph.nodes.filter(n => n.type === "task" && n.metadata.owner === node.label);
+  const blockingMe   = graph.nodes.filter(n => n.type === "task" && n.metadata.waitingOnOthers && n.metadata.owner === node.label);
+  const theirThreads = graph.nodes.filter(n => n.type === "thread" && (n.metadata.participants || []).includes(node.label));
+  const theirMtgs    = graph.nodes.filter(n => n.type === "meeting" && (n.metadata.attendees || []).some(a => String(a).includes(node.label)));
+
+  return (
+    <>
+      <div className="fg-panel__kicker">Person</div>
+      <div className="fg-panel__title">{node.label}</div>
+      {email && <div className="fg-muted" style={{ fontSize: 12, marginBottom: 12 }}>{email}</div>}
+
+      <PanelSection title="Open items they own">
+        {ownedTasks.length ? ownedTasks.slice(0, 6).map(t => (
+          <div key={t.id} className="fg-panel__task-row">
+            <span className="fg-panel__lane-dot" style={{ background: (LANE_STYLE[t.metadata.lane] || LANE_STYLE.on_track).dot }} />
+            {t.label}
+          </div>
+        )) : <span className="fg-muted">No tasks assigned to this person.</span>}
+      </PanelSection>
+
+      <PanelSection title="Blocking my work">
+        {blockingMe.length ? blockingMe.map(t => (
+          <div key={t.id} className="fg-panel__task-row" style={{ color: "#ef4444" }}>
+            ⚠ {t.label}
+          </div>
+        )) : <span className="fg-muted">Nothing blocked by this person.</span>}
+      </PanelSection>
+
+      {theirThreads.length > 0 && (
+        <PanelSection title="Related threads">
+          {theirThreads.slice(0, 4).map(t => (
+            <div key={t.id} className="fg-panel__info-row"><span>{t.label}</span></div>
+          ))}
+        </PanelSection>
+      )}
+
+      {theirMtgs.length > 0 && (
+        <PanelSection title="Meetings together">
+          {theirMtgs.slice(0, 4).map(m => (
+            <div key={m.id} className="fg-panel__info-row"><span>{m.label}</span><span>{fmt(m.metadata.date)}</span></div>
+          ))}
+        </PanelSection>
+      )}
+    </>
+  );
+}
+
+// ─── Task Modal ───────────────────────────────────────────────────────────────
+
+function TaskModal({ node, onClose }) {
+  if (!node) return null;
+  const t = node.metadata;
+  const lane = LANE_STYLE[t.lane] || LANE_STYLE.on_track;
+
+  return (
+    <div className="fg-modal-backdrop" onClick={onClose}>
+      <div className="fg-modal" onClick={e => e.stopPropagation()}>
+        <button className="fg-modal__close" onClick={onClose}>✕</button>
+        <div className="fg-panel__kicker" style={{ color: lane.text }}>Task · {lane.label}</div>
+        <div className="fg-modal__title">{node.label}</div>
+
+        <div className="fg-modal__grid">
+          <div><span>Assigned to</span><strong>{t.owner || "Unassigned"}</strong></div>
+          <div><span>Source</span><strong>{t.source || "Unknown"}</strong></div>
+          <div><span>Status</span><strong>{t.status || "Open"}</strong></div>
+          <div><span>Deadline</span><strong>{fmtDue(t.dueDate)}</strong></div>
+          {t.jiraKey && <div><span>Jira</span><strong>{t.jiraKey}</strong></div>}
+        </div>
+
+        <div className="fg-modal__section">
+          <div className="fg-modal__section-title">What needs to be done</div>
+          <div className="fg-modal__section-body">{t.description || node.label}</div>
+        </div>
+
+        {(t.meetingSubject || t.jiraKey) && (
+          <div className="fg-modal__section">
+            <div className="fg-modal__section-title">Context</div>
+            {t.meetingSubject && <div className="fg-panel__info-row"><span>From meeting</span><span>{t.meetingSubject}</span></div>}
+            {t.jiraKey && t.jiraUrl && <div className="fg-panel__info-row"><span>Jira link</span><a href={t.jiraUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{t.jiraKey}</a></div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Legend ───────────────────────────────────────────────────────────────────
+
+function Legend() {
+  return (
+    <div className="fg-legend">
+      {[
+        { label: "Project",         color: NODE_STYLE.project.ring },
+        { label: "Meeting",         color: NODE_STYLE.meeting.ring },
+        { label: "Thread",          color: NODE_STYLE.thread.ring  },
+        { label: "Person",          color: NODE_STYLE.person.ring  },
+        { label: "Overdue/Blocked", color: LANE_STYLE.critical.dot },
+        { label: "Due Soon",        color: LANE_STYLE.attention.dot},
+        { label: "This Week",       color: LANE_STYLE.watch.dot    },
+        { label: "On Track",        color: LANE_STYLE.on_track.dot },
+        { label: "Waiting",         color: LANE_STYLE.waiting.dot  },
+      ].map(({ label, color }) => (
+        <div key={label} className="fg-legend__item">
+          <span className="fg-legend__dot" style={{ background: color }} />
+          <span>{label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export default function FocusGraphTab({ onGoDeeper }) {
+  // ── State ──
+  const [listData,    setListData]    = useState(null);  // getFocusGraph result
+  const [loadingList, setLoadingList] = useState(true);
+  const [listError,   setListError]   = useState(null);
+
+  const [projectName, setProjectName] = useState("");
+  const [detail,      setDetail]      = useState(null);  // getProjectDetails result
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  const [filters, setFilters] = useState({
+    person: "", source: "all", urgency: "all", ownership: "all", timeRange: 14,
+  });
+
+  const [focusedId,   setFocusedId]   = useState("");
+  const [taskModalId, setTaskModalId] = useState("");
+  const [panelOpen,   setPanelOpen]   = useState(true);
+
+  const [threadCache, setThreadCache] = useState({});
+  const [viewport,    setViewport]    = useState({ x: 0, y: 0, scale: 0.75 });
+  const [positions,   setPositions]   = useState({});
+  const [manualPos,   setManualPos]   = useState({});
+
+  const canvasRef = useRef(null);
+  const dragRef   = useRef(null);
+  const animRef   = useRef(null);
+
+  // ── Load project list ──
   useEffect(() => {
+    let dead = false;
     (async () => {
-      setLoadingProjects(true);
+      setLoadingList(true);
       try {
-        const [inboxRes, eventsRes] = await Promise.all([getInbox(40), getEvents()]);
-        const threads = inboxRes.messages || [];
-        const events  = eventsRes.events  || [];
-        if (threads.length === 0) { setProjects([]); return; }
-        const summary = await getProjectsSummary(threads, events);
-        setProjects((summary.projects || []).map((p) => ({
-          ...p, _loaded: false, _loading: false, _detail: null, _expanded: false,
-        })));
+        const res = await getFocusGraph();
+        if (!dead) {
+          setListData(res);
+          const first = res.meta?.projectOptions?.[0]?.name || "";
+          setProjectName(first);
+        }
       } catch (e) {
-        setError(e.message);
+        if (!dead) setListError(e.message);
       } finally {
-        setLoadingProjects(false);
+        if (!dead) setLoadingList(false);
       }
     })();
+    return () => { dead = true; };
   }, []);
 
-  // ── Load unresolved issues ──
+  // ── Load project detail when project changes ──
   useEffect(() => {
+    if (!projectName || !listData) return;
+    const opt = listData.meta?.projectOptions?.find(o => o.name === projectName);
+    if (!opt) return;
+
+    let dead = false;
+    setDetail(null);
+    setLoadingDetail(true);
+    setFocusedId("");
+    setManualPos({});
+
     (async () => {
-      setLoadingUnresolved(true);
       try {
-        const res = await getUnresolvedIssues(meetingCount);
-        setUnresolvedIssues(res.issues || []);
-      } catch {
-        setUnresolvedIssues([]);
+        const res = await getProjectDetails(opt.threadId || "", opt.name, opt.nextMeetingId || "");
+        if (!dead) setDetail(res);
+      } catch (e) {
+        console.warn("[FocusGraph] getProjectDetails failed:", e.message);
+        if (!dead) setDetail({ meetings: [], pendingTasks: [], attendees: [], emailThreads: [] });
       } finally {
-        setLoadingUnresolved(false);
+        if (!dead) setLoadingDetail(false);
       }
     })();
-  }, [meetingCount]);
+    return () => { dead = true; };
+  }, [projectName, listData]);
 
-  // ── Lazy-load project detail on expand ──
-  const handleExpand = useCallback(async (idx) => {
-    setProjects((prev) => {
-      const next = [...prev];
-      const p    = next[idx];
-      if (p._loaded || p._loading) {
-        next[idx] = { ...p, _expanded: !p._expanded };
+  // ── Build graph ──
+  const projectOpt = listData?.meta?.projectOptions?.find(o => o.name === projectName);
+  const graph = useMemo(() => {
+    if (!projectOpt || !detail) return null;
+    return buildGraph(projectOpt, detail, listData);
+  }, [projectOpt, detail, listData]);
+
+  // ── Focus state ──
+  const effectiveFocusId = focusedId || graph?.projectId || "";
+  const focusState = useMemo(() => getFocusState(graph, effectiveFocusId), [graph, effectiveFocusId]);
+
+  // ── Filter highlight set ──
+  const highlightSet = useMemo(() => {
+    if (!graph) return new Set();
+    const anyActive = filters.person || filters.source !== "all" || filters.urgency !== "all" || filters.ownership !== "all";
+    if (!anyActive) return new Set(graph.nodes.map(n => n.id));
+    const s = new Set([graph.projectId]);
+    for (const n of graph.nodes) {
+      let match = false;
+      if (filters.person && n.type === "person" && n.label === filters.person) match = true;
+      if (filters.source !== "all" && n.type === filters.source) match = true;
+      if (filters.urgency !== "all" && n.type === "task" && n.metadata.lane === filters.urgency) match = true;
+      if (filters.ownership === "mine"      && n.type === "task" && n.metadata.isMine) match = true;
+      if (filters.ownership === "delegated" && n.type === "task" && n.metadata.waitingOnOthers) match = true;
+      if (match) { s.add(n.id); (n.connections || []).forEach(id => s.add(id)); }
+    }
+    return s;
+  }, [graph, filters]);
+
+  // ── Compute layout ──
+  useEffect(() => {
+    if (!graph) return;
+    const target = computeLayout(graph.nodes, effectiveFocusId);
+    // Animate towards target positions
+    const animate = () => {
+      setPositions(prev => {
+        const next = { ...prev };
+        let moving = false;
+        for (const id of Object.keys(target)) {
+          const t = manualPos[id] || target[id];
+          const p = prev[id] || t;
+          const dx = t.x - p.x, dy = t.y - p.y;
+          if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+            next[id] = t;
+          } else {
+            next[id] = { x: p.x + dx * 0.18, y: p.y + dy * 0.18 };
+            moving = true;
+          }
+        }
+        if (moving) animRef.current = requestAnimationFrame(animate);
         return next;
-      }
-      next[idx] = { ...p, _expanded: true, _loading: true };
-      return next;
+      });
+    };
+    cancelAnimationFrame(animRef.current);
+    animRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animRef.current);
+  }, [graph, effectiveFocusId, manualPos]);
+
+  // ── Center viewport on focus node ──
+  useEffect(() => {
+    if (!canvasRef.current || !effectiveFocusId) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const pos  = computeLayout(graph?.nodes || [], effectiveFocusId)[effectiveFocusId];
+    if (!pos) return;
+    setViewport(v => ({
+      ...v,
+      x: rect.width  / 2 - pos.x * v.scale,
+      y: rect.height / 2 - pos.y * v.scale,
+    }));
+  }, [effectiveFocusId, graph?.projectId]);
+
+  // ── Auto-load thread summary when thread node is focused ──
+  useEffect(() => {
+    const node = focusState.focusNode;
+    if (!node || node.type !== "thread") return;
+    const cid = node.metadata.conversationId;
+    if (!cid || threadCache[cid]) return;
+    let dead = false;
+    setThreadCache(c => ({ ...c, [cid]: { loading: true } }));
+    getThreadCatchup(cid).then(res => {
+      if (!dead) setThreadCache(c => ({ ...c, [cid]: { loading: false, data: res } }));
+    }).catch(() => {
+      if (!dead) setThreadCache(c => ({ ...c, [cid]: { loading: false, data: null } }));
     });
+    return () => { dead = true; };
+  }, [focusState.focusNode?.id]);
 
-    const p = projects[idx];
-    if (p._loaded || p._loading) return;
+  // ── Pan / zoom handlers ──
+  const handleWheel = useCallback(e => {
+    e.preventDefault();
+    const d = e.deltaY > 0 ? -0.07 : 0.07;
+    setViewport(v => ({ ...v, scale: Math.max(0.35, Math.min(2, v.scale + d)) }));
+  }, []);
 
-    try {
-      const detail = await getProjectDetails(p.threadId, p.name, p.nextMeetingId);
-      setProjects((prev) => {
-        const next = [...prev];
-        next[idx]  = { ...next[idx], _detail: detail, _loaded: true, _loading: false };
-        return next;
-      });
-    } catch {
-      setProjects((prev) => {
-        const next = [...prev];
-        next[idx]  = { ...next[idx], _loading: false, _loaded: true, _detail: null };
-        return next;
-      });
-    }
-  }, [projects]);
+  const handleCanvasDown = useCallback(e => {
+    if (e.target.closest(".fg-node")) return;
+    dragRef.current = { mode: "pan", sx: e.clientX, sy: e.clientY, bx: viewport.x, by: viewport.y };
+  }, [viewport]);
 
-  // ── Scroll to project + expand it ──
-  const handleScrollToProject = useCallback((projectName) => {
-    const idx = projects.findIndex((p) =>
-      p.name?.toLowerCase().includes(projectName?.toLowerCase())
-    );
-    if (idx === -1) return;
+  useEffect(() => {
+    const onMove = e => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (d.mode === "pan") {
+        setViewport(v => ({ ...v, x: d.bx + (e.clientX - d.sx), y: d.by + (e.clientY - d.sy) }));
+      }
+      if (d.mode === "node") {
+        const dx = (e.clientX - d.sx) / viewport.scale;
+        const dy = (e.clientY - d.sy) / viewport.scale;
+        setManualPos(p => ({ ...p, [d.nodeId]: { x: d.ox + dx, y: d.oy + dy } }));
+        d.moved = true;
+      }
+    };
+    const onUp = () => {
+      const d = dragRef.current;
+      if (d?.mode === "node" && !d.moved) {
+        // Single click on node
+        const node = graph?.nodeMap[d.nodeId];
+        if (node?.type === "task") {
+          setTaskModalId(node.id);
+        } else if (node) {
+          setFocusedId(node.id);
+          setPanelOpen(true);
+        }
+      }
+      dragRef.current = null;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [viewport.scale, graph]);
 
-    // Expand if not already
-    if (!projects[idx]._expanded) handleExpand(idx);
+  // ── People options (only person nodes) ──
+  const peopleOptions = useMemo(() =>
+    graph ? graph.nodes.filter(n => n.type === "person").map(n => n.label).sort() : []
+  , [graph]);
 
-    // Scroll after a tick to let expansion render
-    setTimeout(() => {
-      const key = projects[idx].threadId || idx;
-      projectRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
-  }, [projects, handleExpand]);
+  const modalNode  = taskModalId ? graph?.nodeMap[taskModalId] : null;
+  const panelNode  = focusState.focusNode;
+  const threadData = panelNode?.type === "thread" ? threadCache[panelNode.metadata.conversationId] : null;
 
-  // Issues grouped by project for passing down
-  const issuesForProject = (projectName) =>
-    unresolvedIssues.filter((i) =>
-      (i.affectedProjects || []).some((ap) =>
-        ap.toLowerCase().includes((projectName || "").toLowerCase())
-      )
-    );
+  const isLoading = loadingList || loadingDetail;
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-
+    <div className="fg-root">
       {/* ── Page header ── */}
-      <div className="page-header" style={{ marginBottom: 20 }}>
-        <div className="page-title">🗂 Projects</div>
-        <div className="page-subtitle">
-          Active projects inferred from your inbox and calendar. Expand any project to explore its graph.
-        </div>
+      <div className="page-header">
+        <div className="page-title">🎯 Focus Graph</div>
+        <div className="page-subtitle">Click through your project context. Everything in one canvas.</div>
       </div>
 
-      {error && <div className="error-state">⚠️ {error}</div>}
+      {listError && <div className="error-state">⚠ {listError}</div>}
 
-      {/* ── Neutral unresolved issues banner ── */}
-      {!loadingUnresolved && unresolvedIssues.length > 0 && (
-        <UnresolvedBanner
-          issues={unresolvedIssues}
-          meetingCount={meetingCount}
-          onChangeMeetingCount={setMeetingCount}
-          onClickProject={handleScrollToProject}
-        />
-      )}
+      <div className="fg-shell">
 
-      {/* ── Projects list ── */}
-      {loadingProjects ? (
-        <div className="card loading-state">
-          <div className="spinner" />
-          <div className="loading-text">Analysing your inbox and calendar for active projects…</div>
-        </div>
-      ) : projects.length === 0 ? (
-        <div className="card">
-          <div className="empty-state">
-            <div className="empty-icon">🗂</div>
-            <div className="empty-text">No active projects detected. Make sure your inbox has recent threads.</div>
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {projects.map((project, idx) => {
-            const key = project.threadId || idx;
-            return (
-              <div key={key} ref={(el) => { projectRefs.current[key] = el; }}>
-                <ProjectCard
-                  project={project}
-                  unresolvedIssues={issuesForProject(project.name)}
-                  onToggle={() => handleExpand(idx)}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UnresolvedBanner — neutral strip, shows project source, clickable
-// ─────────────────────────────────────────────────────────────────────────────
-function UnresolvedBanner({ issues, meetingCount, onChangeMeetingCount, onClickProject }) {
-  return (
-    <div style={{
-      background: "var(--bg, #f8f9fb)",
-      border: "1px solid var(--border)",
-      borderRadius: 10,
-      padding: "12px 16px",
-      marginBottom: 20,
-    }}>
-      {/* Header row */}
-      <div style={{
-        display: "flex", alignItems: "center",
-        justifyContent: "space-between", gap: 10,
-        marginBottom: 10, flexWrap: "wrap",
-      }}>
-        <span style={{
-          fontSize: 12, fontWeight: 600,
-          color: "var(--text-secondary)",
-          display: "flex", alignItems: "center", gap: 6,
-        }}>
-          🔁 Recurring unresolved
-          <span style={{
-            fontSize: 11, fontWeight: 500,
-            color: "var(--text-tertiary)", fontStyle: "italic",
-          }}>
-            — topics that keep coming up without a decision
-          </span>
-        </span>
-
-        {/* Meeting window selector */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Last</span>
+        {/* ── Top bar ── */}
+        <div className="fg-topbar card">
+          {/* Project selector */}
           <select
-            value={meetingCount}
-            onChange={(e) => onChangeMeetingCount(Number(e.target.value))}
-            style={{
-              fontSize: 11, padding: "2px 6px", borderRadius: 6,
-              border: "1px solid var(--border)", background: "var(--bg)",
-              color: "var(--text-primary)", cursor: "pointer",
-            }}
+            className="fg-select fg-select--primary"
+            value={projectName}
+            onChange={e => setProjectName(e.target.value)}
           >
-            {[3, 5, 10, 15, 20].map((n) => (
-              <option key={n} value={n}>{n} meetings</option>
+            {(listData?.meta?.projectOptions || []).map(o => (
+              <option key={o.id} value={o.name}>{o.name}</option>
             ))}
+            {!listData?.meta?.projectOptions?.length && <option value="">Loading projects…</option>}
           </select>
-        </div>
-      </div>
 
-      {/* Issue pills */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {issues.map((issue, i) => {
-          const projectName = (issue.affectedProjects || [])[0] || null;
-          return (
-            <div
-              key={i}
-              onClick={() => projectName && onClickProject(projectName)}
-              style={{
-                fontSize: 12, padding: "5px 12px", borderRadius: 8,
-                background: "var(--card-bg, white)",
-                border: "1px solid var(--border)",
-                color: "var(--text-primary)",
-                display: "flex", alignItems: "center", gap: 8,
-                cursor: projectName ? "pointer" : "default",
-                transition: "border-color 0.15s, background 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                if (!projectName) return;
-                e.currentTarget.style.borderColor = "var(--accent)";
-                e.currentTarget.style.background  = "var(--accent-light)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "var(--border)";
-                e.currentTarget.style.background  = "var(--card-bg, white)";
-              }}
+          <div className="fg-topbar__divider" />
+
+          {/* Person filter */}
+          <select className="fg-select" value={filters.person} onChange={e => setFilters(f => ({ ...f, person: e.target.value }))}>
+            <option value="">All people</option>
+            {peopleOptions.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+
+          {/* Source filter */}
+          <select className="fg-select" value={filters.source} onChange={e => setFilters(f => ({ ...f, source: e.target.value }))}>
+            <option value="all">All types</option>
+            <option value="thread">Threads</option>
+            <option value="meeting">Meetings</option>
+            <option value="task">Tasks</option>
+            <option value="person">People</option>
+          </select>
+
+          {/* Urgency filter */}
+          <select className="fg-select" value={filters.urgency} onChange={e => setFilters(f => ({ ...f, urgency: e.target.value }))}>
+            <option value="all">All urgency</option>
+            <option value="critical">Overdue / Blocked</option>
+            <option value="attention">Due Soon</option>
+            <option value="watch">This Week</option>
+            <option value="on_track">On Track</option>
+            <option value="waiting">Waiting</option>
+          </select>
+
+          {/* Ownership filter */}
+          <select className="fg-select" value={filters.ownership} onChange={e => setFilters(f => ({ ...f, ownership: e.target.value }))}>
+            <option value="all">Mine + Delegated</option>
+            <option value="mine">Mine only</option>
+            <option value="delegated">Delegated / Waiting</option>
+          </select>
+
+          {/* Reset focus button */}
+          {focusedId && focusedId !== graph?.projectId && (
+            <button
+              className="fg-btn fg-btn--ghost"
+              onClick={() => { setFocusedId(graph?.projectId || ""); setManualPos({}); }}
             >
-              {/* Risk dot — small, not alarming */}
-              <span style={{
-                width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-                background: RISK[issue.riskLevel]?.badge || RISK.medium.badge,
-                opacity: 0.7,
-              }} />
-
-              {/* Issue name */}
-              <span style={{ fontWeight: 500 }}>{issue.issue}</span>
-
-              {/* ×count */}
-              <span style={{
-                fontSize: 11, color: "var(--text-tertiary)",
-                fontWeight: 600,
-              }}>
-                ×{issue.meetingCount}
-              </span>
-
-              {/* Project source — clickable hint */}
-              {projectName && (
-                <span style={{
-                  fontSize: 10, padding: "1px 6px", borderRadius: 6,
-                  background: "var(--accent-light)",
-                  color: "var(--accent)", fontWeight: 600,
-                }}>
-                  {projectName} ↗
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ProjectCard
-// ─────────────────────────────────────────────────────────────────────────────
-function ProjectCard({ project, unresolvedIssues, onToggle }) {
-  const p        = PRIORITY[project.priority] || PRIORITY.medium;
-  const expanded = project._expanded;
-  const [generatingPdf, setGeneratingPdf] = useState(false);
-  const handleHandover = async (e) => {
-    e.stopPropagation();
-    setGeneratingPdf(true);
-    try {
-      const objectUrl = await getHandoverReport(project.threadId, project.name);
-      const a = document.createElement("a");
-      a.href   = objectUrl;
-      a.target = "_blank";
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-    } catch (err) {
-      console.error("Handover PDF error:", err);
-      alert("Could not generate handover report. Please try again.");
-    } finally {
-      setGeneratingPdf(false);
-    }
-  };
-  
-  return (
-    <div style={{
-      border: `1px solid ${expanded ? "var(--accent)" : "var(--border)"}`,
-      borderLeft: `4px solid ${p.dot}`,
-      borderRadius: 10,
-      overflow: "hidden",
-      transition: "border-color 0.2s",
-      background: "var(--card-bg, white)",
-    }}>
-      {/* Root node header */}
-      <div
-        onClick={onToggle}
-        style={{
-          padding: "16px 18px", cursor: "pointer", userSelect: "none",
-          background: expanded ? "var(--accent-light)" : "transparent",
-          transition: "background 0.15s",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-              <span style={{
-                fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
-                background: p.bg, color: p.text, border: `1px solid ${p.border}`,
-                textTransform: "uppercase", letterSpacing: "0.05em",
-              }}>
-                {project.priority || "medium"}
-              </span>
-              {project.nextMeeting && (
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                  📅 {project.nextMeeting}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
-              {project.name}
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              {project.summary}
-            </div>
-            {project.keyTask && (
-              <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-secondary)", display: "flex", alignItems: "flex-start", gap: 6 }}>
-                <span style={{ color: "#8b5cf6", fontWeight: 700, flexShrink: 0 }}>Key task:</span>
-                {project.keyTask}
-              </div>
-            )}
-          </div>
-          <div style={{
-            fontSize: 12, fontWeight: 600, padding: "6px 14px", borderRadius: 8,
-            background: expanded ? "var(--border)" : "var(--accent)",
-            color: expanded ? "var(--text-secondary)" : "white",
-            flexShrink: 0, whiteSpace: "nowrap",
-            transition: "background 0.15s, color 0.15s",
-          }}>
-            {project._loading ? "Loading…" : expanded ? "▾ Collapse" : "▸ Explore"}
-
-            
-          </div>
-
-          <button
-  onClick={handleHandover}
-  disabled={generatingPdf}
-  style={{
-    fontSize: 12, fontWeight: 600,
-    padding: "6px 14px", borderRadius: 8,
-    background: "transparent",
-    border: "1px solid var(--border)",
-    color: "var(--text-secondary)",
-    cursor: generatingPdf ? "wait" : "pointer",
-    flexShrink: 0, whiteSpace: "nowrap",
-    display: "flex", alignItems: "center", gap: 5,
-    transition: "border-color 0.15s, color 0.15s",
-  }}
-  onMouseEnter={(e) => {
-    e.currentTarget.style.borderColor = "var(--accent)";
-    e.currentTarget.style.color = "var(--accent)";
-  }}
-  onMouseLeave={(e) => {
-    e.currentTarget.style.borderColor = "var(--border)";
-    e.currentTarget.style.color = "var(--text-secondary)";
-  }}
->
-  {generatingPdf ? "⏳ Generating…" : "📄 Handover"}
-</button>
-        </div>
-      </div>
-
-      {/* Expanded graph */}
-      {expanded && (
-        <div style={{ borderTop: "1px solid var(--border)" }}>
-          {project._loading ? (
-            <div className="loading-state" style={{ padding: 32 }}>
-              <div className="spinner" />
-              <div className="loading-text">Loading project details…</div>
-            </div>
-          ) : (
-            <ProjectGraph
-              project={project}
-              detail={project._detail}
-              unresolvedIssues={unresolvedIssues}
-            />
+              ↩ Reset view
+            </button>
           )}
         </div>
-      )}
-    </div>
-  );
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ProjectGraph — 5-node graph
-// ─────────────────────────────────────────────────────────────────────────────
-function ProjectGraph({ project, detail, unresolvedIssues }) {
-  const [activeNode, setActiveNode] = useState(null);
+        {/* ── Canvas + Panel ── */}
+        <div className={`fg-layout ${panelOpen ? "fg-layout--panel-open" : ""}`}>
 
-  const nodeCounts = {
-    meetings:   (detail?.meetings     || []).length,
-    tasks:      (detail?.pendingTasks || []).length,
-    people:     (detail?.attendees    || []).length,
-    threads:    (detail?.emailThreads || []).length,
-    unresolved: unresolvedIssues.length,
-  };
-
-  const handleNode = (id) => setActiveNode(activeNode === id ? null : id);
-
-  return (
-    <div style={{ padding: "0 0 20px 0" }}>
-
-      {/* Vertical stem from header */}
-      <div style={{ display: "flex", justifyContent: "center" }}>
-        <div style={{ width: 2, height: 24, background: "var(--accent)", opacity: 0.3 }} />
-      </div>
-
-      {/* Nodes row */}
-      <div style={{ position: "relative", padding: "0 20px" }}>
-        {/* Horizontal spine */}
-        <div style={{
-          position: "absolute", top: 0,
-          left: "calc(10% + 20px)", right: "calc(10% + 20px)",
-          height: 2, background: "var(--accent)", opacity: 0.15,
-        }} />
-
-        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-          {NODE_CONFIG.map((node) => {
-            const isActive  = activeNode === node.id;
-            const count     = nodeCounts[node.id];
-            const hasIssues = node.id === "unresolved" && count > 0;
-
-            return (
-              <div
-                key={node.id}
-                style={{ flex: 1, maxWidth: 160, display: "flex", flexDirection: "column", alignItems: "center" }}
-              >
-                {/* Drop line */}
-                <div style={{ width: 2, height: 20, background: "var(--accent)", opacity: 0.2 }} />
-
-                {/* Node button */}
-                <button
-                  onClick={() => handleNode(node.id)}
-                  style={{
-                    width: "100%", padding: "10px 6px", borderRadius: 10, cursor: "pointer",
-                    border: `2px solid ${isActive ? node.color : hasIssues ? "#d9770630" : "var(--border)"}`,
-                    background: isActive ? `${node.color}15` : "var(--bg)",
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                    transition: "all 0.15s", outline: "none",
-                  }}
-                >
-                  <span style={{ fontSize: 18 }}>{node.icon}</span>
-                  <span style={{
-                    fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
-                    color: isActive ? node.color : "var(--text-secondary)",
-                  }}>
-                    {node.label}
-                  </span>
-                  {count > 0 && (
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10,
-                      background: isActive ? node.color : hasIssues ? "#d9770620" : "var(--border)",
-                      color: isActive ? "white" : hasIssues ? "#d97706" : "var(--text-tertiary)",
-                    }}>
-                      {count}
-                    </span>
-                  )}
-                </button>
+          {/* Canvas */}
+          <div
+            ref={canvasRef}
+            className="fg-canvas card"
+            onMouseDown={handleCanvasDown}
+            onWheel={handleWheel}
+          >
+            {isLoading && (
+              <div className="loading-state" style={{ padding: 80 }}>
+                <div className="spinner" />
+                <div className="loading-text">Building project context graph…</div>
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Active node content */}
-      {activeNode && (
-        <>
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <div style={{ width: 2, height: 16, background: "var(--accent)", opacity: 0.2 }} />
-          </div>
-          <div style={{ margin: "0 20px", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-            {activeNode === "unresolved" ? (
-              <UnresolvedNodeContent issues={unresolvedIssues} />
-            ) : (
-              <NodeContent nodeId={activeNode} project={project} detail={detail} />
             )}
+
+            {!isLoading && !graph && (
+              <div className="empty-state" style={{ padding: 80 }}>
+                <div className="empty-icon">🎯</div>
+                <div className="empty-text">Select a project to begin.</div>
+              </div>
+            )}
+
+            {!isLoading && graph && (
+              <div
+                className="fg-scene"
+                style={{
+                  width:     SCENE.w,
+                  height:    SCENE.h,
+                  transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
+                }}
+              >
+                {/* Edges */}
+                <svg className="fg-edges" width={SCENE.w} height={SCENE.h}>
+                  <defs>
+                    <marker id="fg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                      <path d="M0,0 L10,5 L0,10 z" fill="rgba(148,163,184,0.6)" />
+                    </marker>
+                  </defs>
+                  {focusState.visible && graph.edges.map(edge => {
+                    const fpos = positions[edge.from];
+                    const tpos = positions[edge.to];
+                    if (!fpos || !tpos) return null;
+                    if (!focusState.visible.has(edge.from) && !focusState.visible.has(edge.to)) return null;
+                    const dimmed = !highlightSet.has(edge.from) || !highlightSet.has(edge.to);
+                    return (
+                      <line
+                        key={edge.id}
+                        x1={fpos.x} y1={fpos.y}
+                        x2={tpos.x} y2={tpos.y}
+                        className={`fg-edge ${dimmed ? "fg-edge--dimmed" : ""}`}
+                        markerEnd="url(#fg-arrow)"
+                      />
+                    );
+                  })}
+                </svg>
+
+                {/* Nodes */}
+                {graph.nodes.map(node => {
+                  const pos = positions[node.id];
+                  if (!pos) return null;
+                  const isVisible = focusState.visible.has(node.id);
+                  const isDimmed  = !isVisible || !highlightSet.has(node.id);
+                  const isActive  = focusState.focusNode?.id === node.id;
+                  if (!isVisible && !focusedId) return null; // on initial load, only show visible
+                  return (
+                    <GraphNode
+                      key={node.id}
+                      node={node}
+                      pos={pos}
+                      isActive={isActive}
+                      isDimmed={isDimmed}
+                      onMouseDown={e => {
+                        e.stopPropagation();
+                        dragRef.current = {
+                          mode: "node", nodeId: node.id, moved: false,
+                          sx: e.clientX, sy: e.clientY,
+                          ox: pos.x, oy: pos.y,
+                        };
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Legend */}
+            <Legend />
+
+            {/* Zoom controls */}
+            <div className="fg-zoom-controls">
+              <button onClick={() => setViewport(v => ({ ...v, scale: Math.min(2, v.scale + 0.12) }))}>+</button>
+              <button onClick={() => setViewport(v => ({ ...v, scale: Math.max(0.35, v.scale - 0.12) }))}>−</button>
+              <button onClick={() => { setViewport({ x: 0, y: 0, scale: 0.75 }); setManualPos({}); }}>⌂</button>
+            </div>
           </div>
-        </>
-      )}
-    </div>
-  );
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UnresolvedNodeContent — shown when Unresolved node is active
-// ─────────────────────────────────────────────────────────────────────────────
-function UnresolvedNodeContent({ issues }) {
-  const cfg = NODE_CONFIG.find((n) => n.id === "unresolved");
-
-  return (
-    <div>
-      <div style={{
-        padding: "10px 16px",
-        background: "#d9770610",
-        borderBottom: "1px solid var(--border)",
-        fontSize: 12, fontWeight: 700, color: "#d97706",
-        display: "flex", alignItems: "center", gap: 6,
-        textTransform: "uppercase", letterSpacing: "0.05em",
-      }}>
-        {cfg.icon} Unresolved Issues
-      </div>
-
-      {issues.length === 0 ? (
-        <div style={{ padding: 20, fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic", textAlign: "center" }}>
-          No recurring unresolved issues detected for this project.
+          {/* Side panel */}
+          <aside className={`fg-panel card ${panelOpen ? "fg-panel--open" : "fg-panel--closed"}`}>
+            <div className="fg-panel__bar">
+              <button className="fg-panel__toggle" onClick={() => setPanelOpen(o => !o)}>
+                {panelOpen ? "Hide →" : "← Details"}
+              </button>
+            </div>
+            {panelOpen && (
+              <div className="fg-panel__scroll">
+                <SidePanel
+                  node={panelNode}
+                  graph={graph}
+                  threadState={threadData}
+                  onGoDeeper={onGoDeeper}
+                  onCopyReply={r => navigator.clipboard.writeText(r)}
+                />
+              </div>
+            )}
+          </aside>
         </div>
-      ) : (
-        issues.map((issue, i) => (
-          <div key={i} style={{
-            padding: "12px 16px",
-            borderBottom: i < issues.length - 1 ? "1px solid var(--border)" : "none",
-            display: "flex", alignItems: "flex-start", gap: 12,
-          }}>
-            {/* Risk dot */}
-            <span style={{
-              width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 4,
-              background: RISK[issue.riskLevel]?.badge || RISK.medium.badge,
-              opacity: 0.8,
-            }} />
-
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-                  {issue.issue}
-                </div>
-                <span style={{
-                  fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, flexShrink: 0,
-                  background: RISK[issue.riskLevel]?.bg || RISK.medium.bg,
-                  color: RISK[issue.riskLevel]?.text || RISK.medium.text,
-                }}>
-                  {issue.riskLevel || "medium"} risk
-                </span>
-              </div>
-
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <span>Seen in <strong>{issue.meetingCount}</strong> meeting{issue.meetingCount !== 1 ? "s" : ""}</span>
-                {issue.lastSeen && (
-                  <span>Last: {new Date(issue.lastSeen).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
-                )}
-              </div>
-
-              {issue.suggestion && (
-                <div style={{
-                  marginTop: 6, fontSize: 12, padding: "5px 10px", borderRadius: 6,
-                  background: "var(--bg)", color: "var(--text-secondary)",
-                  borderLeft: "3px solid var(--accent)",
-                }}>
-                  💡 {issue.suggestion}
-                </div>
-              )}
-            </div>
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NodeContent — meetings / tasks / people / threads
-// ─────────────────────────────────────────────────────────────────────────────
-function NodeContent({ nodeId, project, detail }) {
-  const cfg = NODE_CONFIG.find((n) => n.id === nodeId);
-
-  const headerStyle = {
-    padding: "10px 16px",
-    background: `${cfg.color}10`,
-    borderBottom: "1px solid var(--border)",
-    fontSize: 12, fontWeight: 700, color: cfg.color,
-    display: "flex", alignItems: "center", gap: 6,
-    textTransform: "uppercase", letterSpacing: "0.05em",
-  };
-
-  if (nodeId === "meetings") {
-    const meetings = detail?.meetings || [];
-    return (
-      <div>
-        <div style={headerStyle}>{cfg.icon} Meetings</div>
-        {meetings.length === 0 ? (
-          <EmptyNode message="No meeting records found. Run post-call processing after a meeting to populate this." />
-        ) : (
-          meetings.map((m, i) => (
-            <div key={i} style={{ padding: "12px 16px", borderBottom: i < meetings.length - 1 ? "1px solid var(--border)" : "none" }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", flex: 1 }}>{m.subject}</div>
-                {m.date && (
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap", flexShrink: 0 }}>
-                    {new Date(m.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-                  </span>
-                )}
-              </div>
-              {m.summary && (
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.55, marginBottom: 6 }}>{m.summary}</div>
-              )}
-              {(m.actionItems || []).length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {m.actionItems.slice(0, 3).map((a, j) => (
-                    <span key={j} style={{
-                      fontSize: 11, padding: "2px 8px", borderRadius: 12,
-                      background: a.status === "done" ? "var(--green-light)" : "#fff7ed",
-                      color: a.status === "done" ? "var(--green)" : "#c2410c",
-                      border: `1px solid ${a.status === "done" ? "var(--green)" : "#fed7aa"}`,
-                    }}>
-                      {a.status === "done" ? "✓" : "⏳"} {a.owner}: {(a.task || "").slice(0, 40)}
-                    </span>
-                  ))}
-                  {m.actionItems.length > 3 && (
-                    <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>+{m.actionItems.length - 3} more</span>
-                  )}
-                </div>
-              )}
-            </div>
-          ))
-        )}
       </div>
-    );
-  }
 
-  if (nodeId === "tasks") {
-    const tasks = detail?.pendingTasks || [];
-    return (
-      <div>
-        <div style={headerStyle}>{cfg.icon} Pending Tasks</div>
-        {tasks.length === 0 ? (
-          <EmptyNode message="No pending tasks found in approval queue for this project." />
-        ) : (
-          tasks.map((t, i) => (
-            <div key={i} style={{ padding: "10px 16px", display: "flex", alignItems: "flex-start", gap: 10, borderBottom: i < tasks.length - 1 ? "1px solid var(--border)" : "none" }}>
-              <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>
-                {t.type === "email" ? "📧" : t.type === "calendar" ? "📅" : t.type === "reminder" ? "🔔" : "✅"}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: "var(--text-primary)", wordBreak: "break-word" }}>{t.label}</div>
-                {t.data?.urgency && (
-                  <span style={{
-                    fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8, marginTop: 4, display: "inline-block",
-                    background: t.data.urgency === "high" ? "#fef2f2" : t.data.urgency === "medium" ? "#fffbeb" : "#f0fdf4",
-                    color: t.data.urgency === "high" ? "#b91c1c" : t.data.urgency === "medium" ? "#92400e" : "#166534",
-                  }}>
-                    {t.data.urgency}
-                  </span>
-                )}
-              </div>
-              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: "#fff7ed", color: "#c2410c", flexShrink: 0 }}>
-                pending
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-    );
-  }
-
-  if (nodeId === "people") {
-    const attendees = detail?.attendees || [];
-    return (
-      <div>
-        <div style={headerStyle}>{cfg.icon} Key People</div>
-        {attendees.length === 0 ? (
-          <EmptyNode message="No attendee data found. Run post-call processing to populate." />
-        ) : (
-          <div style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 10 }}>
-            {attendees.map((a, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)" }}>
-                <div style={{
-                  width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
-                  background: `hsl(${((a.name || "").charCodeAt(0) * 37) % 360}, 60%, 85%)`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 12, fontWeight: 700,
-                  color: `hsl(${((a.name || "").charCodeAt(0) * 37) % 360}, 60%, 30%)`,
-                }}>
-                  {(a.name || a.email || "?").charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{a.name || a.email}</div>
-                  {a.taskCount > 0 && (
-                    <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{a.taskCount} task{a.taskCount !== 1 ? "s" : ""} assigned</div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (nodeId === "threads") {
-    const threads = detail?.emailThreads || [];
-    return (
-      <div>
-        <div style={headerStyle}>{cfg.icon} Email Threads</div>
-        {threads.length === 0 ? (
-          <EmptyNode message="No email threads linked to this project." />
-        ) : (
-          threads.map((t, i) => (
-            <div key={i} style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: i < threads.length - 1 ? "1px solid var(--border)" : "none" }}>
-              <span style={{ fontSize: 14, flexShrink: 0 }}>📧</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", wordBreak: "break-word" }}>{t.subject}</div>
-                {t.latestDate && (
-                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-                    Last activity: {new Date(t.latestDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-                    {t.messageCount && ` · ${t.messageCount} messages`}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    );
-  }
-
-  return null;
-}
-
-function EmptyNode({ message }) {
-  return (
-    <div style={{ padding: 20, fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic", textAlign: "center" }}>
-      {message}
+      {/* Task modal */}
+      <TaskModal node={modalNode} onClose={() => setTaskModalId("")} />
     </div>
   );
 }

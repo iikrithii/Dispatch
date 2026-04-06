@@ -27,6 +27,63 @@ function tokenize(text = "") {
     .filter((w) => w.length > 3 && !STOP_WORDS.has(w));
 }
 
+function parseAttendee(attendee) {
+  if (!attendee) return null;
+
+  if (typeof attendee === "string") {
+    const match = attendee.match(/^(.+?)\s*<(.+?)>$/);
+    if (match) {
+      return {
+        name: match[1].trim(),
+        email: match[2].trim().toLowerCase(),
+      };
+    }
+
+    const text = attendee.trim();
+    return {
+      name: text.includes("@") ? "" : text,
+      email: text.includes("@") ? text.toLowerCase() : "",
+    };
+  }
+
+  if (attendee.emailAddress?.address) {
+    return {
+      name: attendee.emailAddress.name || "",
+      email: String(attendee.emailAddress.address || "").trim().toLowerCase(),
+    };
+  }
+
+  if (attendee.address || attendee.email) {
+    return {
+      name: attendee.name || "",
+      email: String(attendee.address || attendee.email || "").trim().toLowerCase(),
+    };
+  }
+
+  return null;
+}
+
+function deriveDisplayName(name = "", email = "") {
+  if (name) return name;
+  if (!email) return "";
+  return email
+    .split("@")[0]
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function ownerMatchesPerson(owner = "", person = {}) {
+  const ownerText = String(owner || "").trim().toLowerCase();
+  if (!ownerText) return false;
+
+  const name = String(person.name || "").trim().toLowerCase();
+  const email = String(person.email || "").trim().toLowerCase();
+  const firstName = name.split(/\s+/)[0] || "";
+  const localPart = email.split("@")[0] || "";
+
+  return [name, firstName, email, localPart].some((candidate) => candidate && ownerText.includes(candidate));
+}
+
 app.http("getProjectDetails", {
   methods: ["GET", "OPTIONS"],
   authLevel: "anonymous",
@@ -40,6 +97,10 @@ app.http("getProjectDetails", {
       const threadId     = req.query.get("threadId")     || "";
       const projectName  = req.query.get("projectName")  || "";
       const nextMeetingId = req.query.get("nextMeetingId") || "";
+      const meetingLimit = Math.min(
+        Math.max(parseInt(req.query.get("meetingLimit") || "5", 10) || 5, 1),
+        20
+      );
 
       if (!threadId && !projectName) {
         return errorResponse("threadId or projectName is required", 400);
@@ -50,7 +111,7 @@ app.http("getProjectDetails", {
       // ── 1. Get matching meeting records from Cosmos ──
       // Use project name as keyword signal; attendees empty (we don't know them yet)
       const keywords    = tokenize(projectName);
-      const meetings    = await cosmosService.getPreviousMeetings(userId, [], keywords, 5);
+      const meetings    = await cosmosService.getPreviousMeetings(userId, [], keywords, meetingLimit);
 
       // ── 2. Get all pending items from approval queue ──
       const allPending  = await cosmosService.getPendingItems(userId);
@@ -66,11 +127,10 @@ app.http("getProjectDetails", {
       const attendeeMap = new Map();
       for (const m of meetings) {
         for (const a of (m.attendees || [])) {
-          // attendees stored as "Name <email>" or just email
-          const match   = typeof a === "string" ? a.match(/^(.+?)\s*<(.+?)>$/) : null;
-          const name    = match ? match[1].trim() : (typeof a === "string" ? a : a.name || a.email || "");
-          const email   = match ? match[2].trim() : (typeof a === "object" ? a.email : a);
-          const key     = email || name;
+          const parsed = parseAttendee(a);
+          const name = deriveDisplayName(parsed?.name || "", parsed?.email || "");
+          const email = parsed?.email || "";
+          const key = email || name.toLowerCase();
           if (!key) continue;
 
           if (!attendeeMap.has(key)) {
@@ -78,7 +138,7 @@ app.http("getProjectDetails", {
           }
           // Count tasks assigned to this person
           for (const item of pendingTasks) {
-            if ((item.data?.owner || "").toLowerCase().includes((name || "").toLowerCase().split(" ")[0])) {
+            if (ownerMatchesPerson(item.data?.owner || item.data?.person || "", { name, email })) {
               attendeeMap.get(key).taskCount++;
             }
           }
@@ -97,9 +157,18 @@ app.http("getProjectDetails", {
         subject:     m.subject || "(Untitled meeting)",
         date:        m.startTime || m.savedAt || null,
         summary:     m.summary  || null,
+        attendees:   (m.attendees || [])
+          .map((attendee) => parseAttendee(attendee))
+          .filter(Boolean)
+          .map((attendee) => ({
+            name: deriveDisplayName(attendee.name || "", attendee.email || ""),
+            email: attendee.email || "",
+          })),
         actionItems: (m.actionItems || []).map((a) => ({
           owner:  a.owner || "",
           task:   a.task  || "",
+          deadline: a.deadline || null,
+          urgency: a.urgency || null,
           status: a.status || "pending",
         })),
       }));
