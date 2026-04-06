@@ -1,0 +1,26 @@
+{
+  "name": "dispatch-backend",
+  "version": "1.0.0",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "deploy": "func azure functionapp publish dispatch-backend-api"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.0.0",
+    "@azure/identity": "^4.4.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "dotenv": "^17.3.1",
+    "isomorphic-fetch": "^3.0.0",
+    "node-fetch": "^2.7.0",
+    "openai": "^4.47.1",
+    "pdfkit": "^0.18.0"
+  },
+  "devDependencies": {
+    "@azure/functions": "^4.0.0",
+    "@types/pdfkit": "^0.17.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

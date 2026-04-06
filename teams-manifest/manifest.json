@@ -1,0 +1,64 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "REPLACE_WITH_GUID",
+  "packageName": "com.dispatch.app",
+  "developer": {
+    "name": "Icebreakers — IIT Madras",
+    "websiteUrl": "https://YOUR_DOMAIN.azurestaticapps.net",
+    "privacyUrl": "https://YOUR_DOMAIN.azurestaticapps.net/privacy",
+    "termsOfUseUrl": "https://YOUR_DOMAIN.azurestaticapps.net/terms"
+  },
+  "icons": {
+    "color": "icon-color.png",
+    "outline": "icon-outline.png"
+  },
+  "name": {
+    "short": "Dispatch",
+    "full": "Dispatch — AI Meeting Layer"
+  },
+  "description": {
+    "short": "Walk into meetings prepared, leave without loose ends.",
+    "full": "Dispatch is an AI layer for Microsoft 365 that handles context switching. Pre-call briefs, post-call action capture, email thread catch-ups, and a daily priority view — all at the transitions where work falls apart."
+  },
+  "accentColor": "#5b5ef4",
+  "staticTabs": [
+    {
+      "entityId": "dispatch-daily",
+      "name": "Daily View",
+      "contentUrl": "https://YOUR_DOMAIN.azurestaticapps.net?tab=daily",
+      "scopes": ["personal"]
+    },
+    {
+      "entityId": "dispatch-precall",
+      "name": "Pre-Call Brief",
+      "contentUrl": "https://YOUR_DOMAIN.azurestaticapps.net?tab=pre-call",
+      "scopes": ["personal"]
+    },
+    {
+      "entityId": "dispatch-postcall",
+      "name": "Post-Call",
+      "contentUrl": "https://YOUR_DOMAIN.azurestaticapps.net?tab=post-call",
+      "scopes": ["personal"]
+    },
+    {
+      "entityId": "dispatch-threads",
+      "name": "Thread Catch-Up",
+      "contentUrl": "https://YOUR_DOMAIN.azurestaticapps.net?tab=threads",
+      "scopes": ["personal"]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "YOUR_DOMAIN.azurestaticapps.net",
+    "YOUR_FUNCTION_APP.azurewebsites.net"
+  ],
+  "webApplicationInfo": {
+    "id": "REPLACE_WITH_CLIENT_ID",
+    "resource": "api://YOUR_DOMAIN.azurestaticapps.net/REPLACE_WITH_CLIENT_ID"
+  }
+}
