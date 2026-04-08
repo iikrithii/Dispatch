@@ -1,26 +1,6 @@
 const { app } = require("@azure/functions");
 const { checkCommitmentsWithAI } = require("../services/openaiService");
-
-// ── Hardcoded demo transcript ─────────────────────────────────────────────────
-const DEMO_TRANSCRIPT = {
-  meetingTitle: "Q2 Investment Planning — Action & Delivery Review",
-  date: "2026-04-05",
-  participants: ["Sanjeev", "Robin", "Akshay", "Krithi"],
-  knownCalendarLoad: {
-    "2026-04-07": "Tuesday — Sanjeev has 3 back-to-back meetings: Product Sync 10am, Investor Call 1pm, Team Standup 4pm. 5.5 hours blocked.",
-    "2026-04-08": "Wednesday — Akshay has Sprint Planning 10am-12pm and a Design Review 2pm-4pm. Robin is free most of the day.",
-    "2026-04-09": "Thursday — Sanjeev has an all-day offsite. Krithi has Legal Review 11am and Client Demo 3pm.",
-    "2026-04-10": "Friday — Akshay has half day leave from 1pm. Robin has a 9am-11am Finance Sync.",
-    "2026-04-14": "Tuesday next week — Full team has Quarterly Business Review 9am-1pm (4 hours blocked).",
-    "2026-04-16": "Thursday next week — Sanjeev travelling to Bangalore. Robin has Board Prep call 2pm."
-  },
-  pendingTasks: [
-    "Sanjeev: Review and sign 3 pending vendor contracts (estimated 4 hours of work)",
-    "Robin: Complete Q1 expense reconciliation report (in progress, 2 days of work remaining)",
-    "Akshay: Fix 4 critical bugs in the portfolio tracker before next investor demo",
-    "Krithi: Finalise term sheets for 2 investee companies"
-  ]
-};
+const { buildCommitmentContextText } = require("../services/liveInsightContext");
 
 app.http("commitmentCheck", {
   methods: ["POST", "OPTIONS"],
@@ -52,7 +32,7 @@ app.http("commitmentCheck", {
       };
     }
 
-    const { transcript } = body;
+    const { transcript, liveContext } = body;
 
     if (!transcript || typeof transcript !== "string" || transcript.trim().length < 5) {
       return {
@@ -62,23 +42,7 @@ app.http("commitmentCheck", {
       };
     }
 
-    // ── Build context from hardcoded local data ───────────────────────────────
-    const calendarContext = Object.entries(DEMO_TRANSCRIPT.knownCalendarLoad)
-      .map(([date, desc]) => `${date}: ${desc}`)
-      .join("\n");
-
-    const tasksContext = DEMO_TRANSCRIPT.pendingTasks.join("\n");
-
-    const fullContext = `
-Meeting: ${DEMO_TRANSCRIPT.meetingTitle}
-Participants: ${DEMO_TRANSCRIPT.participants.join(", ")}
-
-Calendar Load for next 7 days:
-${calendarContext}
-
-Pending Tasks and existing workload:
-${tasksContext}
-    `.trim();
+    const fullContext = buildCommitmentContextText(liveContext);
 
     // ── Call AI ───────────────────────────────────────────────────────────────
     let result;

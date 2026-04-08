@@ -4,6 +4,7 @@ import { MsalProvider, useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { msalInstance, loginRequest, getCurrentUser } from "./services/auth";
 import DailyTodos from "./components/DailyTodos";
 import PreCallBrief from "./components/PreCallBrief";
+import LiveCall from "./components/LiveCall";
 import PostCallPanel from "./components/PostCallPanel";
 import ThreadCatchup from "./components/ThreadCatchup";
 import "./App.css";
@@ -14,6 +15,7 @@ import ProjectsTab from "./components/ProjectsTab";
 const TABS = [
   { id: "daily",     label: "Daily View",     icon: "📋" },
   { id: "pre-call",  label: "Pre-Call Brief",  icon: "📅" },
+  { id: "live-call", label: "Live Call",       icon: "🔴" },
   { id: "post-call", label: "Post-Call",       icon: "✅" },
   { id: "threads",   label: "Thread Catch-Up", icon: "📧" },
   { id: "projects",  label: "Projects",        icon: "🗂" }
@@ -119,6 +121,7 @@ function AppShell() {
       <main className="main-content">
         {activeTab === "daily"     && <DailyTodos />}
         {activeTab === "pre-call"  && <PreCallBrief />}
+        {activeTab === "live-call" && <LiveCall />}
         {activeTab === "post-call" && <PostCallPanel />}
         {activeTab === "threads"   && <ThreadCatchup />}
         {activeTab === "projects"  && <ProjectsTab />}

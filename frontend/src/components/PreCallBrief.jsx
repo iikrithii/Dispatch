@@ -1,6 +1,7 @@
 // src/components/PreCallBrief.jsx
 import React, { useEffect, useState } from "react";
 import { getEvents, getPreMeetingBrief } from "../services/api";
+import { getAccessToken } from "../services/auth";
 import { formatDistanceToNow } from "date-fns";
 import MeetingNotes from "./MeetingNotes";
 
@@ -118,14 +119,24 @@ export default function PreCallBrief() {
   useEffect(() => {
     getEvents()
     .then((r) => {
+      console.log("[PreCallBrief] Events API response:", r);
       const now = new Date();
+      // Show meetings from past 2 hours to next 7 days
+      const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
       const upcoming = (r.events || []).filter(e => {
         const start = getDateString(e.start);
-        return start && new Date(start) > now;
+        return start && new Date(start) > twoHoursAgo;
       });
+      console.log("[PreCallBrief] Filtered upcoming meetings:", upcoming);
       setEvents(upcoming);
+      if (upcoming.length === 0) {
+        setError("No upcoming meetings (within next 7 days)");
+      }
     })
-      .catch((e) => setError(e.message))
+      .catch((e) => {
+        console.error("[PreCallBrief] Error loading events:", e);
+        setError("Error loading events: " + e.message);
+      })
       .finally(() => setLoadingEvents(false));
   }, []);
 
@@ -391,6 +402,42 @@ export default function PreCallBrief() {
 function BriefDisplay({ brief, event, meta, onAgendaUpdate }) {
   const joinUrl = event?.joinUrl || event?.onlineMeeting?.joinUrl;
 
+  // Start bot and open meeting
+  const joinMeetingWithBot = async (url, title) => {
+    try {
+      // Get auth token
+      const token = await getAccessToken();
+
+      // Call backend to start live session with bot
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL || "http://localhost:7071/api"}/start-live-session`,
+        {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify({ meetingUrl: url }),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const sessionId = data.sessionId;
+        console.log("Bot session started with ID:", sessionId);
+        // Store sessionId in localStorage so LiveCall tab can use it
+        localStorage.setItem("activeLiveSession", sessionId);
+      } else {
+        console.error("Failed to start bot session");
+      }
+    } catch (err) {
+      console.error("Error starting bot:", err.message);
+    }
+
+    // Open meeting in new tab
+    window.open(url, "_blank");
+  };
+
   const evidenceItems = [
     { label: "Emails",        value: meta?.emailsAnalyzed        || 0 },
     { label: "Past Meetings", value: meta?.previousMeetingsFound || 0 },
@@ -407,10 +454,11 @@ function BriefDisplay({ brief, event, meta, onAgendaUpdate }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{safeFormatFull(event?.start)}</span>
           {joinUrl && (
-            <a href={joinUrl} target="_blank" rel="noreferrer"
-              style={{ fontSize: 12, color: "white", fontWeight: 600, background: "var(--accent)", padding: "4px 12px", borderRadius: 12, textDecoration: "none", whiteSpace: "nowrap" }}>
+            <button
+              onClick={() => joinMeetingWithBot(joinUrl, event?.subject)}
+              style={{ fontSize: 12, color: "white", fontWeight: 600, background: "var(--accent)", padding: "4px 12px", borderRadius: 12, textDecoration: "none", whiteSpace: "nowrap", border: "none", cursor: "pointer" }}>
               Join →
-            </a>
+            </button>
           )}
         </div>
       </div>

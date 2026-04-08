@@ -1,22 +1,6 @@
 const { app } = require("@azure/functions");
 const { detectContextDrift } = require("../services/openaiService");
-
-const DEMO_AGENDA = `
-1. Review total corpus and confirm 70-20-10 allocation split
-2. Lock delivery dates for the investor portfolio deck (due April 20th)
-3. Confirm Infosys rebalancing plan and execution date
-4. Decide on Edelweiss structured product and REIT allocation (deadline April 12th)
-5. Assign SMID stock research owner and timeline
-6. Schedule CA call for advance tax discussion
-`;
-
-const DEMO_CONTEXT = `
-Meeting: Q2 Investment Planning — Action & Delivery Review
-Participants: Sanjeev, Robin, Akshay, Krithi
-Duration: 42 minutes
-All agenda items are important. The Edelweiss deadline (April 12th) is the most time-sensitive.
-The investor deck deadline (April 20th) is fixed and non-negotiable.
-`;
+const { buildAgendaText, buildMeetingContextText } = require("../services/liveInsightContext");
 
 app.http("driftDetection", {
   methods: ["POST", "OPTIONS"],
@@ -47,7 +31,7 @@ app.http("driftDetection", {
       };
     }
 
-    const { transcript } = body;
+    const { transcript, liveContext } = body;
     if (!transcript || transcript.trim().length < 5) {
       return {
         status: 400,
@@ -60,8 +44,8 @@ app.http("driftDetection", {
     try {
       result = await detectContextDrift({
         transcript: transcript.trim(),
-        agenda: DEMO_AGENDA,
-        context: DEMO_CONTEXT,
+        agenda: buildAgendaText(liveContext),
+        context: buildMeetingContextText(liveContext),
       });
     } catch (err) {
       context.log("AI error:", err.message);

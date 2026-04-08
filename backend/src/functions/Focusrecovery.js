@@ -1,19 +1,6 @@
 const { app } = require("@azure/functions");
 const { generateFocusRecovery } = require("../services/openaiService");
-
-const DEMO_CONTEXT = `
-Meeting: Q2 Investment Planning — Action & Delivery Review
-Participants: Sanjeev, Robin, Akshay, Krithi
-
-Background:
-- Total corpus: 4.8 crore
-- Agreed allocation: 70% equity, 20% debt, 10% alternatives
-- Equity book: currently overweight Infosys at 18% (agreed to cap at 12%)
-- Alternatives bucket: Edelweiss structured product (9.4% for 18 months) and Embassy REIT
-- Edelweiss subscription closes April 12th — hard deadline
-- Investor deck due to go out April 20th
-- Quarterly Business Review on April 14th — full team blocked 9am-1pm
-`;
+const { buildMeetingContextText } = require("../services/liveInsightContext");
 
 app.http("focusRecovery", {
   methods: ["POST", "OPTIONS"],
@@ -44,7 +31,7 @@ app.http("focusRecovery", {
       };
     }
 
-    const { transcript, userName } = body;
+    const { transcript, userName, liveContext } = body;
     if (!transcript || transcript.trim().length < 5) {
       return {
         status: 400,
@@ -57,8 +44,8 @@ app.http("focusRecovery", {
     try {
       result = await generateFocusRecovery({
         transcript: transcript.trim(),
-        userName: userName || "Sanjeev",
-        context: DEMO_CONTEXT,
+        userName: userName || liveContext?.user?.name || "You",
+        context: buildMeetingContextText(liveContext),
       });
     } catch (err) {
       context.log("AI error:", err.message);

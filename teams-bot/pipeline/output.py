@@ -8,6 +8,7 @@ class OutputHandler:
         self.filepath = filepath
         self.webhook_url = webhook_url
         self.backend_url = backend_url.rstrip("/") if backend_url else None
+        self.api_base_url = self._normalize_api_base_url(self.backend_url)
         self.batch_size = batch_size
         self.focus_recovery_batch_size = focus_recovery_batch_size
         self.user_name = user_name
@@ -18,9 +19,15 @@ class OutputHandler:
         with open(self.filepath, "w", encoding="utf-8") as f:
             f.write(f"=== Transcript started: {datetime.now()} ===\n\n")
         print(f"[Output] Saving transcript to: {self.filepath}")
-        if self.backend_url:
-            print(f"[Output] Backend integration enabled: {self.backend_url}")
+        if self.api_base_url:
+            print(f"[Output] Backend integration enabled: {self.api_base_url}")
             print(f"[Output] Main batch size: {self.batch_size}, Focus recovery batch size: {self.focus_recovery_batch_size}")
+
+    @staticmethod
+    def _normalize_api_base_url(backend_url: str):
+        if not backend_url:
+            return None
+        return backend_url if backend_url.endswith("/api") else f"{backend_url}/api"
 
     def write(self, speaker: str, text: str):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -38,7 +45,7 @@ class OutputHandler:
             except Exception as e:
                 print(f"[Output] Webhook failed: {e}")
 
-        if self.backend_url:
+        if self.api_base_url:
             self.batch_buffer.append(line.strip())
             self.focus_recovery_buffer.append(line.strip())
             self.focus_recovery_counter += 1
@@ -55,7 +62,7 @@ class OutputHandler:
                 self._send_focus_recovery(focus_transcript)
 
     def flush(self):
-        if self.backend_url:
+        if self.api_base_url:
             if self.batch_buffer:
                 batch_transcript = "\n".join(self.batch_buffer)
                 self.batch_buffer = []
@@ -77,7 +84,7 @@ class OutputHandler:
             endpoints.append(("focus-recovery", {"transcript": transcript, "userName": self.user_name}))
 
         for route, payload in endpoints:
-            url = f"{self.backend_url}/api/{route}"
+            url = f"{self.api_base_url}/{route}"
             data = json.dumps(payload).encode("utf-8")
             request = urllib.request.Request(
                 url,
@@ -102,7 +109,7 @@ class OutputHandler:
     def _send_focus_recovery(self, transcript: str):
         route = "focus-recovery"
         payload = {"transcript": transcript, "userName": self.user_name}
-        url = f"{self.backend_url}/api/{route}"
+        url = f"{self.api_base_url}/{route}"
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             url,

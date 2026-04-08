@@ -70,14 +70,47 @@ async def join_teams_meeting(url: str, bot_name: str, output=None):
             except Exception:
                 continue
 
-        # Step 4: Turn off mic and camera
-        for label in ["Mute microphone", "Mute", "Turn off camera", "Camera"]:
+        # Step 4: Turn off mic and camera before join
+        print("[Bot] Disabling microphone and camera...")
+        await asyncio.sleep(1)
+        
+        # Try multiple selectors to find and disable microphone
+        mic_selectors = [
+            "button[aria-label*='Unmute microphone'][aria-pressed='true']",
+            "button[aria-label*='Mute microphone'][aria-pressed='false']",
+            "button[title*='microphone']",
+            "button[data-tid='toggle-video-button'][aria-pressed='true']",
+            "[aria-label*='Microphone']",
+        ]
+        
+        for selector in mic_selectors:
             try:
-                btn = page.locator(f"[aria-label*='{label}']").first
-                state = await btn.get_attribute("aria-pressed", timeout=2000)
-                if state == "true":
-                    await btn.click()
-                    print(f"[Bot] Turned off: {label}")
+                elements = await page.query_selector_all(selector)
+                for el in elements:
+                    aria_pressed = await el.get_attribute("aria-pressed")
+                    aria_label = await el.get_attribute("aria-label")
+                    if aria_pressed == "true" and "microphone" in (aria_label or "").lower():
+                        await el.click()
+                        print(f"[Bot] ✅ Microphone muted")
+                        break
+            except Exception:
+                continue
+        
+        await asyncio.sleep(1)
+
+        # Try to turn off camera
+        camera_selectors = [
+            "button[aria-label*='Turn off camera'][aria-pressed='true']",
+            "button[aria-label*='Stop camera'][aria-pressed='true']",
+        ]
+        
+        for selector in camera_selectors:
+            try:
+                elements = await page.query_selector_all(selector)
+                for el in elements:
+                    await el.click()
+                    print(f"[Bot] ✅ Camera turned off")
+                    break
             except Exception:
                 continue
 
@@ -95,50 +128,78 @@ async def join_teams_meeting(url: str, bot_name: str, output=None):
         print("[Bot] [OK] Inside meeting - listening. Press Ctrl+C to stop.")
 
         # Step 6: Enable live captions automatically
-        try:
-            print("[Bot] Attempting to enable live captions...")
-            
-            # Wait for menu to be available
-            await asyncio.sleep(2)
-            
-            # Click "More options" (three dots)
-            more_buttons = [
-                "[aria-label*='More']",
-                "[aria-label*='More options']",
-                "[role='button'][aria-label*='more']",
-                "button[title*='More']",
-            ]
-            
-            caption_enabled = False
-            for btn_sel in more_buttons:
-                try:
-                    await page.click(btn_sel, timeout=2000)
-                    print("[Bot] Clicked More options")
-                    await asyncio.sleep(1)
-                    break
-                except Exception:
-                    continue
-            
-            # Click "Language and speech"
-            try:
-                await page.click("text=Language and speech", timeout=2000)
-                print("[Bot] Found Language and speech")
-                await asyncio.sleep(1)
-            except Exception:
-                pass
-            
-            # Click "Turn on live captions"
-            try:
-                await page.click("text=Turn on live captions", timeout=2000)
-                print("[Bot] ✅ Live captions enabled!")
-                caption_enabled = True
-                await asyncio.sleep(2)
-            except Exception:
-                print("[Bot] ⚠️  Could not auto-enable captions")
-                print("[Bot] Please manually enable: '...' → Language and speech → Turn on live captions")
+        print("[Bot] Attempting to enable live captions...")
+        await asyncio.sleep(3)  # Give meeting time to fully load
         
+        try:
+            caption_enabled = False
+            
+            # Try direct keyboard shortcut first (Ctrl+Alt+C is common in Teams)
+            print("[Bot] Trying Ctrl+Alt+C keyboard shortcut...")
+            await page.keyboard.press("Control+Alt+KeyC")
+            await asyncio.sleep(2)
+            caption_enabled = True
+            print("[Bot] ✅ Live captions enabled via keyboard!")
+            
         except Exception as e:
-            print(f"[Bot] Error enabling captions: {e}")
+            print(f"[Bot] Keyboard shortcut failed: {e}")
+            
+            try:
+                # Fallback: Try clicking the meeting controls area and finding the menu
+                print("[Bot] Trying via meeting controls menu...")
+                
+                # First, try to find and click any "More" or "..." button
+                await page.keyboard.press("Tab")
+                await asyncio.sleep(0.2)
+                await page.keyboard.press("Tab")
+                await asyncio.sleep(0.2)
+                
+                # Try pressing menu key or finding the button via JavaScript
+                buttons = await page.query_selector_all("button[role='button']")
+                print(f"[Bot] Found {len(buttons)} buttons on page")
+                
+                for btn in buttons:
+                    aria_label = await btn.get_attribute("aria-label")
+                    title = await btn.get_attribute("title")
+                    
+                    # Look for more options button
+                    if aria_label and ("more" in aria_label.lower() or "..." in aria_label):
+                        await btn.click()
+                        print(f"[Bot] Clicked button: {aria_label}")
+                        await asyncio.sleep(1)
+                        
+                        # Now look for captions in the menu
+                        menu_items = await page.query_selector_all("[role='menuitem'], [role='option']")
+                        for item in menu_items:
+                            text = await item.text_content()
+                            if text and ("caption" in text.lower() or "transcript" in text.lower() or "language" in text.lower()):
+                                await item.click()
+                                print(f"[Bot] Clicked menu item: {text}")
+                                await asyncio.sleep(1)
+                                
+                                # Look for the enable button
+                                enable_items = await page.query_selector_all("button, [role='menuitem']")
+                                for enable_item in enable_items:
+                                    enable_text = await enable_item.text_content()
+                                    if enable_text and ("turn on" in enable_text.lower() or "enable" in enable_text.lower()):
+                                        await enable_item.click()
+                                        print(f"[Bot] Clicked: {enable_text}")
+                                        await asyncio.sleep(2)
+                                        caption_enabled = True
+                                        break
+                                break
+                        break
+                
+                if caption_enabled:
+                    print("[Bot] ✅ Live captions enabled!")
+                else:
+                    print("[Bot] ⚠️  Could not auto-enable captions")
+                    print("[Bot] Please manually enable: '...' → Language and speech → Turn on live captions")
+            
+            except Exception as e2:
+                print(f"[Bot] Menu approach failed: {e2}")
+                print("[Bot] ⚠️  Please manually enable captions")
+                print("[Bot] Steps: Click '...' → Language and speech → Turn on live captions")
 
         # Step 7: Start scraping captions
         print("[Bot] Starting caption scraper...")
