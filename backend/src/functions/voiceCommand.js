@@ -113,6 +113,95 @@ function buildTasksAnswer(tasks) {
   return `You have ${tasks.length} open task${tasks.length === 1 ? "" : "s"}. ${taskLines.join(" ")}`;
 }
 
+function toBriefTextList(items = []) {
+  return (items || [])
+    .map((item) => {
+      if (!item) return null;
+      if (typeof item === "string") return item;
+      return item.text || item.title || item.item || null;
+    })
+    .filter(Boolean);
+}
+
+function buildPrioritiesAnswer(topPriorities = []) {
+  if (!topPriorities.length) {
+    return "You do not have any top priorities lined up right now.";
+  }
+
+  const lines = topPriorities.slice(0, 3).map((item, index) => {
+    const title = item?.title || `Priority ${index + 1}`;
+    const time = item?.time ? ` at ${item.time}` : "";
+    return `${index + 1}. ${title}${time}`;
+  });
+
+  return `Your top priorities today are ${lines.join(". ")}.`;
+}
+
+function buildPendingApprovalsAnswer(count = 0) {
+  return count > 0
+    ? `You have ${count} pending approval${count === 1 ? "" : "s"} waiting for review.`
+    : "You do not have any pending approvals right now.";
+}
+
+function buildDueRemindersAnswer(reminders = []) {
+  const count = reminders.length || 0;
+  return count > 0
+    ? `You have ${count} due reminder${count === 1 ? "" : "s"} today.`
+    : "You do not have any due reminders right now.";
+}
+
+function buildBriefSummaryAnswer(brief = {}, meeting = null) {
+  if (!brief || Object.keys(brief).length === 0) {
+    return "I do not have a pre-call brief loaded for your next meeting yet.";
+  }
+
+  const title = brief.meetingTitle || meeting?.subject || "your next meeting";
+  const agenda = toBriefTextList(brief.agenda || brief.agendaForToday || []).slice(0, 3);
+  const agendaLine = agenda.length ? `Agenda: ${agenda.join(". ")}.` : "No agenda items were captured yet.";
+  const statusLine = brief.currentStatus ? `Current status: ${brief.currentStatus}` : "";
+  const contextLine = brief.keyContext ? `Key context: ${brief.keyContext}` : "";
+
+  return `Here is your pre-call brief for ${title}. ${statusLine} ${contextLine} ${agendaLine}`.replace(/\s+/g, " ").trim();
+}
+
+function buildBriefAgendaAnswer(brief = {}, meeting = null) {
+  const agenda = toBriefTextList(brief?.agenda || brief?.agendaForToday || []);
+  if (!agenda.length) {
+    return `I do not have agenda items yet for ${brief?.meetingTitle || meeting?.subject || "this meeting"}.`;
+  }
+  return `For ${brief?.meetingTitle || meeting?.subject || "this meeting"}, the agenda is ${agenda.slice(0, 4).join(". ")}.`;
+}
+
+function buildBriefStatusAnswer(brief = {}, meeting = null) {
+  if (!brief?.currentStatus) {
+    return `I do not have a current status summary yet for ${brief?.meetingTitle || meeting?.subject || "this meeting"}.`;
+  }
+  return `For ${brief?.meetingTitle || meeting?.subject || "this meeting"}, the current status is: ${brief.currentStatus}`;
+}
+
+function buildBriefContextAnswer(brief = {}, meeting = null) {
+  if (!brief?.keyContext) {
+    return `I do not have extra background context saved yet for ${brief?.meetingTitle || meeting?.subject || "this meeting"}.`;
+  }
+  return `Key context for ${brief?.meetingTitle || meeting?.subject || "this meeting"}: ${brief.keyContext}`;
+}
+
+function buildBriefFollowUpsAnswer(brief = {}, meeting = null) {
+  const items = (brief?.followUps?.items || []).slice(0, 3);
+  if (!items.length) {
+    return `I do not have any follow-ups captured from the last meeting for ${brief?.meetingTitle || meeting?.subject || "this meeting"}.`;
+  }
+
+  const lines = items.map((item) => {
+    const owner = item?.owner || "someone";
+    const task = item?.task || "an action item";
+    const status = item?.status || "pending";
+    return `${owner}: ${task} (${status})`;
+  });
+
+  return `Recent follow-ups for ${brief?.meetingTitle || meeting?.subject || "this meeting"} are ${lines.join(". ")}.`;
+}
+
 function buildTaskNotFoundAnswer(action, tasks) {
   if (!tasks.length) {
     return `I could not ${action} a task because you do not have any open Dispatch tasks right now.`;
@@ -389,6 +478,77 @@ function detectIntent(transcript) {
   }
 
   if (
+    normalized.includes("pending approval") ||
+    normalized.includes("pending approvals") ||
+    normalized.includes("approval pending") ||
+    normalized.includes("approvals today")
+  ) {
+    return { type: "pending_approvals" };
+  }
+
+  if (
+    normalized.includes("due reminder") ||
+    normalized.includes("due reminders") ||
+    normalized.includes("my reminders") ||
+    normalized.includes("reminders today")
+  ) {
+    return { type: "due_reminders" };
+  }
+
+  if (
+    normalized.includes("top priorities") ||
+    normalized.includes("my priorities") ||
+    normalized.includes("priorities today") ||
+    normalized.includes("priority today")
+  ) {
+    return { type: "priorities" };
+  }
+
+  if (
+    normalized.includes("agenda") ||
+    normalized.includes("meeting agenda") ||
+    normalized.includes("agenda for my next meeting")
+  ) {
+    return { type: "brief_agenda" };
+  }
+
+  if (
+    normalized.includes("current status") ||
+    normalized.includes("project status") ||
+    normalized.includes("where do things stand") ||
+    normalized.includes("status for my next meeting")
+  ) {
+    return { type: "brief_status" };
+  }
+
+  if (
+    normalized.includes("follow up") ||
+    normalized.includes("follow ups") ||
+    normalized.includes("action items from last meeting") ||
+    normalized.includes("pending from last meeting")
+  ) {
+    return { type: "brief_followups" };
+  }
+
+  if (
+    normalized.includes("key context") ||
+    normalized.includes("background for my meeting") ||
+    normalized.includes("meeting context")
+  ) {
+    return { type: "brief_context" };
+  }
+
+  if (
+    normalized.includes("pre call brief") ||
+    normalized.includes("precall brief") ||
+    normalized.includes("brief me for my next meeting") ||
+    normalized.includes("what should i know for my next meeting") ||
+    normalized.includes("prepare me for my next meeting")
+  ) {
+    return { type: "brief_summary" };
+  }
+
+  if (
     /^(update|edit|rename|change)\s+(task\s+)?/i.test(transcript)
   ) {
     return { type: "update_task" };
@@ -410,6 +570,10 @@ function detectIntent(transcript) {
   if (
     normalized.includes("my tasks") ||
     normalized.includes("open tasks") ||
+    normalized.includes("pending task") ||
+    normalized.includes("pending tasks") ||
+    normalized.includes("tasks for today") ||
+    normalized.includes("today tasks") ||
     normalized.includes("to do") ||
     normalized.includes("todo")
   ) {
@@ -439,6 +603,9 @@ app.http("voiceCommand", {
       const body = await req.json();
       const transcript = String(body?.transcript || "").trim();
       const timeZone = body?.timeZone || "Asia/Kolkata";
+      const dailyContext = body?.dailyContext || {};
+      const preCallBrief = body?.preCallBrief || null;
+      const preCallMeeting = body?.preCallMeeting || null;
 
       if (!transcript) {
         return errorResponse("transcript is required", 400);
@@ -495,6 +662,9 @@ app.http("voiceCommand", {
 
       const events = eventsResult?.value || [];
       const tasks = tasksResult?.value || [];
+      const topPriorities = dailyContext?.priorities?.topPriorities || [];
+      const pendingApprovalCount = Number(dailyContext?.rawData?.pendingApprovalCount || 0);
+      const dueReminders = dailyContext?.rawData?.dueReminders || [];
       const todayKey = getDateKey(new Date(), timeZone);
       const todaysEvents = events.filter((event) => {
         if (!event.start?.dateTime) return false;
@@ -625,6 +795,78 @@ app.http("voiceCommand", {
           intent: intent.type,
           transcript,
           answer: `${meetingsAnswer} ${tasksAnswer}`,
+        });
+      }
+
+      if (intent.type === "pending_approvals") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildPendingApprovalsAnswer(pendingApprovalCount),
+        });
+      }
+
+      if (intent.type === "due_reminders") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildDueRemindersAnswer(dueReminders),
+        });
+      }
+
+      if (intent.type === "priorities") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildPrioritiesAnswer(topPriorities),
+        });
+      }
+
+      if (intent.type === "brief_summary") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildBriefSummaryAnswer(preCallBrief, preCallMeeting),
+        });
+      }
+
+      if (intent.type === "brief_agenda") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildBriefAgendaAnswer(preCallBrief, preCallMeeting),
+        });
+      }
+
+      if (intent.type === "brief_status") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildBriefStatusAnswer(preCallBrief, preCallMeeting),
+        });
+      }
+
+      if (intent.type === "brief_context") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildBriefContextAnswer(preCallBrief, preCallMeeting),
+        });
+      }
+
+      if (intent.type === "brief_followups") {
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: buildBriefFollowUpsAnswer(preCallBrief, preCallMeeting),
         });
       }
 

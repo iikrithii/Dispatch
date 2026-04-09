@@ -1,6 +1,6 @@
 // src/components/DailyTodos.jsx
 import React, { useEffect, useRef, useState } from "react";
-import { getDailyTodos, runVoiceCommand } from "../services/api";
+import { getDailyTodos, getPreMeetingBrief, runVoiceCommand } from "../services/api";
 import { format } from "date-fns";
 
 const TYPE_ICONS = {
@@ -103,6 +103,7 @@ export default function DailyTodos() {
   const [isVoiceCommandLoading, setIsVoiceCommandLoading] = useState(false);
   const [voiceCommandTranscript, setVoiceCommandTranscript] = useState("");
   const [voiceCommandResponse, setVoiceCommandResponse] = useState(null);
+  const [voicePreCallBrief, setVoicePreCallBrief] = useState(null);
   const recognitionRef = useRef(null);
   const shouldResumeVoiceCommandRef = useRef(false);
   const spokenLinesRef = useRef(null);
@@ -130,6 +131,52 @@ export default function DailyTodos() {
       spokenLinesRef.current.scrollTop = 0;
     }
   }, [isVoiceModeOn, spokenText]);
+
+  useEffect(() => {
+    const meetings = data?.rawData?.meetings || [];
+    if (!meetings.length) {
+      setVoicePreCallBrief(null);
+      return;
+    }
+
+    const upcomingMeeting =
+      meetings
+        .filter((meeting) => meeting?.id)
+        .sort((a, b) => new Date(a.start || 0) - new Date(b.start || 0))
+        .find((meeting) => {
+          if (!meeting?.start) return false;
+          return new Date(meeting.start).getTime() >= Date.now();
+        }) || meetings.find((meeting) => meeting?.id);
+
+    if (!upcomingMeeting?.id) {
+      setVoicePreCallBrief(null);
+      return;
+    }
+
+    let isCancelled = false;
+
+    getPreMeetingBrief(upcomingMeeting.id)
+      .then((result) => {
+        if (isCancelled) return;
+        setVoicePreCallBrief({
+          meeting: {
+            id: upcomingMeeting.id,
+            subject: upcomingMeeting.subject,
+            start: upcomingMeeting.start,
+          },
+          brief: result?.brief || null,
+        });
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setVoicePreCallBrief(null);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [data]);
 
   function speakBack(text, options = {}) {
     const { showOverlay = false, onEnd = null, onError = null } = options;
@@ -287,6 +334,12 @@ export default function DailyTodos() {
       const result = await runVoiceCommand({
         transcript,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata",
+        dailyContext: {
+          priorities: data?.priorities || {},
+          rawData: data?.rawData || {},
+        },
+        preCallBrief: voicePreCallBrief?.brief || null,
+        preCallMeeting: voicePreCallBrief?.meeting || null,
       });
       setVoiceCommandResponse(result);
       if (result?.answer) {
@@ -1033,7 +1086,7 @@ export default function DailyTodos() {
           }
 
           .dispatch-voice-shell {
-            width: min(96vw, 360px) !important;
+            width: min(94vw, 350px) !important;
             max-height: calc(100vh - 10px) !important;
           }
 
@@ -1049,20 +1102,24 @@ export default function DailyTodos() {
           }
 
           .dispatch-voice-left {
-            min-height: 158px !important;
+            min-height: 182px !important;
             align-items: center !important;
             padding-top: 0;
           }
 
+          .dispatch-voice-right {
+            justify-content: flex-start !important;
+          }
+
           .dispatch-voice-glow {
-            width: 190px !important;
-            height: 190px !important;
+            width: 176px !important;
+            height: 176px !important;
             filter: blur(12px) !important;
           }
 
           .dispatch-voice-visual {
-            width: 148px !important;
-            height: 148px !important;
+            width: 140px !important;
+            height: 140px !important;
           }
 
           .dispatch-voice-ring-outline {
@@ -1070,38 +1127,39 @@ export default function DailyTodos() {
           }
 
           .dispatch-voice-core {
-            inset: 12px !important;
+            inset: 11px !important;
           }
 
           .dispatch-voice-pulse {
-            inset: 30px !important;
+            inset: 28px !important;
           }
 
           .dispatch-voice-mic {
-            width: 68px !important;
-            height: 68px !important;
+            width: 62px !important;
+            height: 62px !important;
           }
 
           .dispatch-voice-mic-icon {
-            font-size: 28px !important;
+            font-size: 26px !important;
           }
 
           .dispatch-voice-mode-label {
             font-size: 10px !important;
             letter-spacing: 0.1em !important;
+            margin-top: 0 !important;
           }
 
           .dispatch-voice-title {
-            font-size: 16px !important;
+            font-size: 15px !important;
             margin-top: 4px !important;
             line-height: 1.15 !important;
           }
 
           .dispatch-voice-subtitle {
-            font-size: 12px !important;
+            font-size: 11px !important;
             margin-top: 4px !important;
             max-width: 100% !important;
-            line-height: 1.45 !important;
+            line-height: 1.4 !important;
           }
 
           .dispatch-voice-command-row {
@@ -1125,14 +1183,16 @@ export default function DailyTodos() {
 
           .dispatch-voice-lines {
             margin-top: 12px !important;
-            min-height: 84px !important;
-            max-height: 18vh !important;
+            min-height: 72px !important;
+            max-height: 14vh !important;
             padding: 10px 12px !important;
           }
 
           .dispatch-voice-response {
             margin-top: 10px !important;
             padding: 10px 12px !important;
+            max-height: 18vh !important;
+            overflow-y: auto !important;
           }
 
           .dispatch-voice-actions {
