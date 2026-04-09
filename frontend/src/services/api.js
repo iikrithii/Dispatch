@@ -92,6 +92,12 @@ export const getProjectsSummary = (threads, events = []) =>
 
 export const getDailyTodos = () => authFetch("/daily-todos");
 
+export const runVoiceCommand = (payload) =>
+  authFetch("/voice-command", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
 // ─────────────────────────────────────────────
 // APPROVALS
 // ─────────────────────────────────────────────

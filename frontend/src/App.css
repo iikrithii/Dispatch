@@ -27,10 +27,13 @@
   --radius: 12px;
   --radius-sm: 8px;
   --radius-lg: 16px;
+  --page-gutter: 28px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-primary); }
+html, body, #root { min-height: 100%; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-primary); overflow-x: hidden; }
+img { max-width: 100%; height: auto; }
 
 /* ── SIGN-IN ─────────────────────────────────────── */
 .signin-screen {
@@ -219,16 +222,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   overflow-y: auto;
   padding: 0;
   background: var(--bg);
+  min-width: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* ── PAGE HEADER ─────────────────────────────────── */
 .page-header {
-  padding: 24px 28px 0;
+  padding: 24px var(--page-gutter) 0;
   margin-bottom: 24px;
 }
 
 .page-title { font-size: 22px; font-weight: 700; color: var(--text-primary); }
 .page-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
+.page-inline { padding-left: var(--page-gutter); padding-right: var(--page-gutter); }
 
 /* ── CARDS ───────────────────────────────────────── */
 .card {
@@ -244,6 +250,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .card-title {
@@ -275,6 +283,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   font-size: 13px; font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
+  max-width: 100%;
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: var(--accent); color: white; }
@@ -316,7 +325,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   border-radius: var(--radius-sm);
   color: var(--red);
   font-size: 14px;
-  margin: 20px 28px;
+  margin: 20px var(--page-gutter);
 }
 
 /* ── EMPTY ───────────────────────────────────────── */
@@ -420,23 +429,185 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 
 /* ── GRID LAYOUT ─────────────────────────────────── */
 .content-grid {
-  padding: 0 28px 28px;
+  padding: 0 var(--page-gutter) var(--page-gutter);
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
 
 .content-stack {
-  padding: 0 28px 28px;
+  padding: 0 var(--page-gutter) var(--page-gutter);
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
+@media (max-width: 1200px) {
+  :root { --page-gutter: 20px; }
+}
+
 @media (max-width: 900px) {
   .content-grid { grid-template-columns: 1fr; }
   .sidebar { width: 60px; }
-  .nav-label, .logo-text, .user-details { display: none; }
+  .sidebar .nav-label,
+  .sidebar .logo-text,
+  .sidebar .user-details { display: none; }
   .sidebar-brand { justify-content: center; }
   .nav-item { justify-content: center; }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --page-gutter: 16px;
+    --radius: 10px;
+    --radius-sm: 8px;
+    --radius-lg: 14px;
+  }
+
+  .app-shell {
+    height: 100vh;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: auto;
+    z-index: 40;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 -10px 30px rgba(0,0,0,0.22);
+  }
+
+  .sidebar-brand,
+  .sidebar-footer {
+    display: none;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    align-items: stretch;
+    overflow-x: auto;
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .nav-item {
+    min-width: 76px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 10px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .sidebar .nav-label {
+    display: block;
+    font-size: 11px;
+    line-height: 1.15;
+    white-space: normal;
+  }
+
+  .main-content {
+    padding-bottom: 88px;
+  }
+
+  .page-header {
+    padding-top: 16px;
+    margin-bottom: 16px;
+  }
+
+  .page-title { font-size: 20px; }
+  .page-subtitle { font-size: 13px; }
+
+  .card { padding: 16px; }
+  .meeting-item { padding: 12px; }
+
+  .approval-item {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .approval-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .live-call-grid {
+    grid-template-columns: 1fr !important;
+    overflow: visible !important;
+  }
+
+  .live-call-primary {
+    grid-template-rows: auto auto !important;
+    overflow: visible !important;
+  }
+
+  .live-call-insights {
+    overflow: visible !important;
+    padding-right: 0 !important;
+  }
+
+  .precall-page {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .precall-left-column {
+    height: auto !important;
+  }
+
+  .precall-meeting-list {
+    max-height: none !important;
+  }
+
+  .precall-evidence-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .thread-list-scroll {
+    max-height: 320px !important;
+  }
+
+  .thread-detail-scroll {
+    max-height: none !important;
+  }
+}
+
+@media (max-width: 540px) {
+  :root { --page-gutter: 12px; }
+
+  .signin-card {
+    padding: 32px 20px;
+    width: calc(100% - 24px);
+  }
+
+  .feature-pill { font-size: 12px; }
+  .card { padding: 14px; }
+
+  .meeting-item {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .meeting-time-block {
+    min-width: auto;
+    text-align: left;
+  }
+
+  .nav-item {
+    min-width: 70px;
+    padding: 8px;
+  }
+
+  .precall-evidence-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .thread-list-scroll {
+    max-height: 280px !important;
+  }
 }

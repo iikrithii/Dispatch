@@ -172,7 +172,7 @@ export default function PreCallBrief() {
 
   return (
     // Outer wrapper: 
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    <div className="precall-page" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
 
       <div className="page-header">
         <div className="page-title">Pre-Call Brief</div>
@@ -182,12 +182,12 @@ export default function PreCallBrief() {
       {error && <div className="error-state">⚠️ {error}</div>}
 
       {/* content-grid fills all remaining vertical space */}
-      <div className="content-grid" style={{ alignItems: "stretch", flex: 1, minHeight: 0 }}>
+      <div className="content-grid precall-grid" style={{ alignItems: "stretch", flex: 1, minHeight: 0 }}>
 
         {/* ════════════════════
             LEFT column
         ════════════════════ */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 15, minWidth: 0, height: "100%", minHeight: 0 }}>
+        <div className="precall-left-column" style={{ display: "flex", flexDirection: "column", gap: 15, minWidth: 0, height: "100%", minHeight: 0 }}>
 
           {/* Meeting list */}
           <div className="card" style={{ flexShrink: 0 }}>
@@ -203,7 +203,7 @@ export default function PreCallBrief() {
                 <div className="empty-text">No upcoming meetings in the next 7 days.</div>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 168, overflowY: "auto", paddingRight: 4 }}>
+              <div className="precall-meeting-list" style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 168, overflowY: "auto", paddingRight: 4 }}>
                 {events.map((event) => (
                   <div
                     key={event.id}
@@ -464,7 +464,7 @@ function BriefDisplay({ brief, event, meta, onAgendaUpdate }) {
       </div>
 
       <BriefSection icon="🛡️" title="How This Brief Was Prepared" noToggle>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+        <div className="precall-evidence-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
           {evidenceItems.map((item) => (
             <div key={item.label} style={{ padding: "12px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
               <div style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)", lineHeight: 1.1, marginBottom: 4 }}>{item.value}</div>

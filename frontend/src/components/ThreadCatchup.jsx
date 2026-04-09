@@ -180,7 +180,7 @@ export default function ThreadCatchup() {
               <div className="empty-text">No threads match "{searchQuery}".</div>
             </div>
           ) : (
-            <div style={{ maxHeight: 540, overflowY: "auto" }}>
+            <div className="thread-list-scroll" style={{ maxHeight: 540, overflowY: "auto" }}>
               {filtered.map((thread) => (
                 <ThreadRow
                   key={thread.conversationId}
@@ -206,7 +206,7 @@ export default function ThreadCatchup() {
               <div className="loading-text">Reading the thread…</div>
             </div>
           ) : (
-            <div style={{ overflowY: "auto", maxHeight: "78vh" }}>
+            <div className="thread-detail-scroll" style={{ overflowY: "auto", maxHeight: "78vh" }}>
               {/* 3-line catchup at top */}
               {catchup && (
                 <CatchupSummary catchup={catchup} />

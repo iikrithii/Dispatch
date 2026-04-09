@@ -34,6 +34,32 @@ async function graphPost(accessToken, path, body) {
   return res.json();
 }
 
+async function graphPatch(accessToken, path, body) {
+  const res = await fetch(`${GRAPH_BASE}${path}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Graph API error [${res.status}] PATCH ${path}: ${err}`);
+  }
+  if (res.status === 204) return {};
+  return res.json();
+}
+
+async function graphDelete(accessToken, path) {
+  const res = await fetch(`${GRAPH_BASE}${path}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Graph API error [${res.status}] DELETE ${path}: ${err}`);
+  }
+  return { success: true };
+}
+
 // ─────────────────────────────────────────────
 // CALENDAR
 // ─────────────────────────────────────────────
@@ -187,6 +213,25 @@ async function getDispatchTasks(accessToken) {
   }
 }
 
+async function updateTask(accessToken, listId, taskId, updates) {
+  const body = {};
+  if (updates.title) body.title = updates.title;
+  if (typeof updates.notes === "string") {
+    body.body = { content: updates.notes, contentType: "text" };
+  }
+  if (updates.dueDate) {
+    body.dueDateTime = { dateTime: new Date(updates.dueDate).toISOString(), timeZone: "UTC" };
+  }
+  if (updates.status) {
+    body.status = updates.status;
+  }
+  return graphPatch(accessToken, `/me/todo/lists/${listId}/tasks/${taskId}`, body);
+}
+
+async function deleteTask(accessToken, listId, taskId) {
+  return graphDelete(accessToken, `/me/todo/lists/${listId}/tasks/${taskId}`);
+}
+
 // ─────────────────────────────────────────────
 // CALENDAR — CREATE INVITE
 // ─────────────────────────────────────────────
@@ -224,6 +269,8 @@ module.exports = {
   getOrCreateDispatchList,
   createTask,
   getDispatchTasks,
+  updateTask,
+  deleteTask,
   createCalendarEvent,
   getMyProfile,
 };

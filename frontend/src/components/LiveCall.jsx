@@ -314,7 +314,7 @@ function LiveCall() {
   const transcriptLines = latestBatch?.transcripts || [];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 16, padding: 16 }}>
+    <div className="live-call-page" style={{ display: "flex", flexDirection: "column", height: "100%", gap: 16, padding: "var(--page-gutter)" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Live Call</h2>
         <p style={{ margin: "4px 0 0 0", fontSize: 12, color: "var(--text-tertiary)" }}>
@@ -407,8 +407,8 @@ function LiveCall() {
       )}
 
       {isRunning && (
-        <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 16, flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateRows: "minmax(0, 1.35fr) minmax(0, 0.85fr)", gap: 16, minHeight: 0, overflow: "hidden" }}>
+        <div className="live-call-grid" style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 16, flex: 1, minHeight: 0, overflow: "hidden" }}>
+          <div className="live-call-primary" style={{ display: "grid", gridTemplateRows: "minmax(0, 1.35fr) minmax(0, 0.85fr)", gap: 16, minHeight: 0, overflow: "hidden" }}>
             <SectionCard
               title="Live Transcript"
               subtitle={latestBatch ? `Updated ${formatTimestamp(latestBatch.timestamp)}` : "Waiting for the first processed transcript window"}
@@ -449,7 +449,7 @@ function LiveCall() {
             </SectionCard>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, overflowY: "auto", minHeight: 0, paddingRight: 4 }}>
+          <div className="live-call-insights" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, overflowY: "auto", minHeight: 0, paddingRight: 4 }}>
             <DriftPanel data={latestInsights?.driftDetection || latestBatch?.apis?.driftDetection} />
             <FocusRecoveryPanel data={latestInsights?.focusRecovery || latestBatch?.apis?.focusRecovery} />
             <ContextWhisperPanel data={latestInsights?.contextWhisper || latestBatch?.apis?.contextWhisper} />
