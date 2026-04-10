@@ -156,12 +156,37 @@ function buildBriefSummaryAnswer(brief = {}, meeting = null) {
   }
 
   const title = brief.meetingTitle || meeting?.subject || "your next meeting";
-  const agenda = toBriefTextList(brief.agenda || brief.agendaForToday || []).slice(0, 3);
-  const agendaLine = agenda.length ? `Agenda: ${agenda.join(". ")}.` : "No agenda items were captured yet.";
-  const statusLine = brief.currentStatus ? `Current status: ${brief.currentStatus}` : "";
-  const contextLine = brief.keyContext ? `Key context: ${brief.keyContext}` : "";
+  const sections = [];
 
-  return `Here is your pre-call brief for ${title}. ${statusLine} ${contextLine} ${agendaLine}`.replace(/\s+/g, " ").trim();
+  // Current Status
+  if (brief.currentStatus) {
+    sections.push(`Current Status: ${brief.currentStatus}`);
+  }
+
+  // Key Context
+  if (brief.keyContext) {
+    sections.push(`Key Context: ${brief.keyContext}`);
+  }
+
+  // Open Points / Blockers
+  const openPoints = toBriefTextList(brief.openPoints || []).slice(0, 3);
+  if (openPoints.length > 0) {
+    sections.push(`Open Points: ${openPoints.join(". ")}.`);
+  }
+
+  // Agenda
+  const agenda = toBriefTextList(brief.agenda || brief.agendaForToday || []).slice(0, 4);
+  if (agenda.length > 0) {
+    sections.push(`Agenda: ${agenda.map((item, i) => `${i + 1}. ${item}`).join(" ")}`);
+  }
+
+  // Follow-ups if available
+  if (brief.followUps?.items && brief.followUps.items.length > 0) {
+    const items = brief.followUps.items.slice(0, 3);
+    sections.push(`Previous Action Items: ${items.map((item) => `${item.owner}: ${item.task} (${item.status})`).join(". ")}.`);
+  }
+
+  return `Here is your pre-call brief for ${title}.\n\n${sections.join("\n\n")}`;
 }
 
 function buildBriefAgendaAnswer(brief = {}, meeting = null) {
@@ -305,6 +330,62 @@ function extractTaskCompletionTarget(rawTranscript) {
   }
 
   return "";
+}
+
+function extractMeetingForBrief(rawTranscript) {
+  const patterns = [
+    /(?:pre.?call|brief|free call)\s+(?:for|about|on)\s+(.+)$/i,
+    /(?:brief me|prepare me)\s+(?:for|on)\s+(.+)$/i,
+    /(.+?)\s+(?:pre.?call|brief|free call)$/i,
+    /(?:what|tell me|get)(?:\s+(?:my|the))?\s+(?:brief|pre.?call|free call)\s+(?:for|about|on)?\s+(.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = rawTranscript.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return "";
+}
+
+function findMeetingByName(events, name) {
+  if (!name || !events || events.length === 0) return null;
+
+  const normalizedName = normalizeText(name);
+  
+  // Exact match
+  const exactMatch = events.find(
+    (event) => normalizeText(event.subject || "") === normalizedName
+  );
+  if (exactMatch) return exactMatch;
+
+  // Contains match
+  const containsMatch = events.find(
+    (event) =>
+      normalizeText(event.subject || "").includes(normalizedName) ||
+      normalizedName.includes(normalizeText(event.subject || ""))
+  );
+  if (containsMatch) return containsMatch;
+
+  // Token overlap match
+  const nameTokens = new Set(normalizedName.split(" ").filter(Boolean));
+  let bestMatch = null;
+  let bestScore = 0;
+
+  for (const event of events) {
+    const eventTokens = normalizeText(event.subject || "")
+      .split(" ")
+      .filter(Boolean);
+    const score = eventTokens.filter((token) => nameTokens.has(token)).length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = event;
+    }
+  }
+
+  return bestScore >= 2 ? bestMatch : null;
 }
 
 function normalizeTaskReference(text = "") {
@@ -454,7 +535,9 @@ function detectIntent(transcript) {
     normalized.includes("today meetings") ||
     normalized.includes("my meetings today") ||
     normalized.includes("today s meetings") ||
+    normalized.includes("todays meetings") ||
     normalized.includes("today s meeting") ||
+    normalized.includes("todays meeting") ||
     normalized.includes("today meeting") ||
     normalized.includes("today meeting s") ||
     normalized.includes("meeting today") ||
@@ -541,10 +624,42 @@ function detectIntent(transcript) {
   if (
     normalized.includes("pre call brief") ||
     normalized.includes("precall brief") ||
+    normalized.includes("free call brief") ||
+    normalized.includes("free call") ||
     normalized.includes("brief me for my next meeting") ||
     normalized.includes("what should i know for my next meeting") ||
     normalized.includes("prepare me for my next meeting")
   ) {
+    return { type: "brief_summary" };
+  }
+
+  if (
+    normalized.includes("pre call for") ||
+    normalized.includes("precall for") ||
+    normalized.includes("free call for") ||
+    normalized.includes("pre call about") ||
+    normalized.includes("precall about") ||
+    normalized.includes("free call about") ||
+    normalized.includes("brief for") ||
+    normalized.includes("brief me for")
+  ) {
+    const meetingName = extractMeetingForBrief(transcript);
+    if (meetingName) {
+      return { type: "brief_for_meeting", meetingName };
+    }
+    return { type: "brief_summary" };
+  }
+
+  if (
+    /\b(?:pre.?call|free call)\b/i.test(transcript) &&
+    !normalized.includes("pre call brief") &&
+    !normalized.includes("precall brief") &&
+    !normalized.includes("free call brief")
+  ) {
+    const meetingName = extractMeetingForBrief(transcript);
+    if (meetingName) {
+      return { type: "brief_for_meeting", meetingName };
+    }
     return { type: "brief_summary" };
   }
 
@@ -574,6 +689,7 @@ function detectIntent(transcript) {
     normalized.includes("pending tasks") ||
     normalized.includes("tasks for today") ||
     normalized.includes("today tasks") ||
+    normalized.includes("todays tasks") ||
     normalized.includes("to do") ||
     normalized.includes("todo")
   ) {
@@ -867,6 +983,70 @@ app.http("voiceCommand", {
           intent: intent.type,
           transcript,
           answer: buildBriefFollowUpsAnswer(preCallBrief, preCallMeeting),
+        });
+      }
+
+      if (intent.type === "brief_for_meeting") {
+        const meetingName = intent.meetingName;
+        const targetMeeting = findMeetingByName(events, meetingName);
+
+        if (!targetMeeting) {
+          const meetingList = events.slice(0, 3).map((e) => e.subject || "Untitled").join(", ") || "no meetings";
+          return jsonResponse({
+            success: true,
+            intent: intent.type,
+            transcript,
+            answer: `I could not find a meeting for "${meetingName}". Today you have ${meetingList}. Please try with the full meeting name.`,
+          });
+        }
+
+        // Check if the target meeting matches the pre-call meeting we have loaded
+        const isSameMeeting = preCallMeeting?.id === targetMeeting.id ||
+          (preCallMeeting?.subject && targetMeeting.subject && 
+           normalizeText(preCallMeeting.subject) === normalizeText(targetMeeting.subject));
+
+        if (isSameMeeting && preCallBrief && Object.keys(preCallBrief).length > 0) {
+          return jsonResponse({
+            success: true,
+            intent: intent.type,
+            transcript,
+            answer: buildBriefSummaryAnswer(preCallBrief, targetMeeting),
+            meeting: {
+              id: targetMeeting.id,
+              subject: targetMeeting.subject,
+              start: targetMeeting.start?.dateTime,
+            },
+            brief: preCallBrief,
+          });
+        }
+
+        // Meeting found but brief not available - provide helpful context
+        if (preCallBrief && preCallMeeting?.subject) {
+          return jsonResponse({
+            success: true,
+            intent: intent.type,
+            transcript,
+            answer: `I found "${targetMeeting.subject}" but I have a detailed pre-call brief ready for your next meeting "${preCallMeeting.subject}". Would you like to hear that instead?`,
+            meeting: {
+              id: targetMeeting.id,
+              subject: targetMeeting.subject,
+              start: targetMeeting.start?.dateTime,
+            },
+          });
+        }
+
+        // No brief data available at all
+        return jsonResponse({
+          success: true,
+          intent: intent.type,
+          transcript,
+          answer: `I found the meeting "${targetMeeting.subject}" scheduled for ${formatMeetingTime(targetMeeting.start?.dateTime, timeZone)}. A detailed pre-call brief will be available soon. Try asking about your next meeting for a full brief.`,
+          meeting: {
+            id: targetMeeting.id,
+            subject: targetMeeting.subject,
+            time: formatMeetingTime(targetMeeting.start?.dateTime, timeZone),
+            start: targetMeeting.start?.dateTime,
+          },
         });
       }
 

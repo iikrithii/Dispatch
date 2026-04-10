@@ -68,6 +68,27 @@ function normalizeForSpeech(text = "") {
     .trim();
 }
 
+function normalizeTranscriptDisplay(text = "") {
+  if (!text) return text;
+  
+  // Convert common speech recognition mishearings back to intended words
+  const corrections = {
+    "free call": "pre-call",
+    "free calls": "pre-calls",
+    "freed call": "pre-call",
+    "pre call brief": "pre-call brief",
+  };
+  
+  let normalized = String(text || "").trim();
+  
+  for (const [mishearing, intended] of Object.entries(corrections)) {
+    const regex = new RegExp(`\\b${mishearing}\\b`, "gi");
+    normalized = normalized.replace(regex, intended);
+  }
+  
+  return normalized;
+}
+
 function formatTimeForSpeech(value) {
   if (!value) return "";
   const parsed = new Date(value);
@@ -290,18 +311,22 @@ export default function DailyTodos() {
           })
       : ["You have no meetings scheduled for today."];
 
-    const approvalsLine = pendingApprovalCount > 0
-      ? `Pending approvals: You have ${pendingApprovalCount} pending approval${pendingApprovalCount === 1 ? "" : "s"} to review.`
-      : "Pending approvals: You have no pending approvals right now.";
+    const briefLines = [greeting];
 
-    const remindersLine = dueReminderCount > 0
-      ? `Due reminders: You have ${dueReminderCount} due reminder${dueReminderCount === 1 ? "" : "s"} today.`
-      : "Due reminders: You have no due reminders right now.";
+    // Only add approvals line if there are pending approvals
+    if (pendingApprovalCount > 0) {
+      const approvalsLine = `Pending approvals: You have ${pendingApprovalCount} pending approval${pendingApprovalCount === 1 ? "" : "s"} to review.`;
+      briefLines.push(approvalsLine);
+    }
+
+    // Only add reminders line if there are due reminders
+    if (dueReminderCount > 0) {
+      const remindersLine = `Due reminders: You have ${dueReminderCount} due reminder${dueReminderCount === 1 ? "" : "s"} today.`;
+      briefLines.push(remindersLine);
+    }
 
     return [
-      greeting,
-      approvalsLine,
-      remindersLine,
+      ...briefLines,
       ...priorityLines,
       ...meetingLines,
     ];
@@ -342,6 +367,20 @@ export default function DailyTodos() {
         preCallMeeting: voicePreCallBrief?.meeting || null,
       });
       setVoiceCommandResponse(result);
+
+      // Intents that modify tasks - refresh daily todos immediately when successful
+      const refreshIntents = ["create_task", "update_task", "remove_task", "complete_task"];
+      const shouldRefresh = refreshIntents.includes(result?.intent);
+
+      // Refresh data immediately if task was modified
+      if (shouldRefresh && result?.success !== false) {
+        getDailyTodos()
+          .then(setData)
+          .catch(() => {
+            // Silent error - data will remain as is
+          });
+      }
+
       if (result?.answer) {
         speakBack(result.answer, {
           onEnd: () => {
@@ -686,6 +725,7 @@ export default function DailyTodos() {
             }}
           >
             <div
+              className="dispatch-voice-bg-blur"
               style={{
                 position: "absolute",
                 inset: -24,
@@ -709,286 +749,245 @@ export default function DailyTodos() {
                 border: "1px solid rgba(255,255,255,0.16)",
                 backdropFilter: "blur(24px) saturate(130%)",
                 WebkitBackdropFilter: "blur(24px) saturate(130%)",
-                overflow: "hidden",
+                overflow: "auto",
                 display: "flex",
                 flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "flex-start",
               }}
             >
-              <div className="dispatch-voice-layout" style={{ position: "relative", display: "flex", alignItems: "center", gap: 28, minHeight: 0, height: "100%" }}>
+              {/* Close button at top */}
+              <div style={{ width: "100%", display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 20 }}>
+                <button
+                  type="button"
+                  onClick={stopVoiceMode}
+                  className="btn-close-voice"
+                  style={{
+                    background: "transparent",
+                    color: "rgba(255,255,255,0.7)",
+                    border: "none",
+                    padding: "8px 8px",
+                    borderRadius: "50%",
+                    cursor: "pointer",
+                    fontSize: 24,
+                    width: 40,
+                    height: 40,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)",
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Mic Animation - Center */}
+              <div
+                style={{
+                  position: "relative",
+                  width: 236,
+                  height: 236,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginBottom: 20,
+                }}
+              >
                 <div
-                  className="dispatch-voice-left"
+                  className="dispatch-voice-glow"
+                  style={{
+                    position: "absolute",
+                    width: 318,
+                    height: 318,
+                    borderRadius: 999,
+                    background:
+                      "radial-gradient(circle at 20% 20%, rgba(89,195,255,0.2), transparent 30%), radial-gradient(circle at 80% 24%, rgba(255,93,143,0.18), transparent 28%), radial-gradient(circle at 50% 88%, rgba(103,240,210,0.16), transparent 30%), radial-gradient(circle, rgba(111,124,255,0.18), rgba(111,124,255,0.02) 58%, transparent 72%)",
+                    filter: "blur(18px)",
+                    pointerEvents: "none",
+                    opacity: 0.92,
+                  }}
+                />
+                <div
+                  className="dispatch-voice-visual"
                   style={{
                     position: "relative",
-                    flex: "0 0 250px",
-                    minHeight: 320,
+                    width: 236,
+                    height: 236,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                   }}
                 >
                   <div
-                    className="dispatch-voice-glow"
+                    className="dispatch-voice-ring"
                     style={{
                       position: "absolute",
-                      width: 318,
-                      height: 318,
-                      borderRadius: 999,
+                      inset: 0,
+                      borderRadius: "50%",
                       background:
-                        "radial-gradient(circle at 20% 20%, rgba(89,195,255,0.2), transparent 30%), radial-gradient(circle at 80% 24%, rgba(255,93,143,0.18), transparent 28%), radial-gradient(circle at 50% 88%, rgba(103,240,210,0.16), transparent 30%), radial-gradient(circle, rgba(111,124,255,0.18), rgba(111,124,255,0.02) 58%, transparent 72%)",
-                      filter: "blur(18px)",
-                      pointerEvents: "none",
-                      opacity: 0.92,
+                        "conic-gradient(from 0deg, #59c3ff, #6f7cff, #9b6bff, #ff5d8f, #ffb86b, #67f0d2, #59c3ff)",
+                      animation: "dispatchVoiceSpin 8s linear infinite",
+                      WebkitMask:
+                        "radial-gradient(farthest-side, transparent calc(100% - 18px), #000 calc(100% - 17px))",
+                      mask:
+                        "radial-gradient(farthest-side, transparent calc(100% - 18px), #000 calc(100% - 17px))",
+                      boxShadow:
+                        "0 0 18px rgba(89,195,255,0.18), 0 0 44px rgba(155,107,255,0.14)",
                     }}
                   />
                   <div
-                    className="dispatch-voice-visual"
+                    className="dispatch-voice-ring-outline"
                     style={{
-                      position: "relative",
-                      width: 236,
-                      height: 236,
+                      position: "absolute",
+                      inset: 6,
+                      borderRadius: "50%",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      opacity: 0.45,
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <div
+                    className="dispatch-voice-core"
+                    style={{
+                      position: "absolute",
+                      inset: 19,
+                      borderRadius: "50%",
+                      background:
+                        "radial-gradient(circle at 50% 24%, rgba(31,41,68,0.92), rgba(10,15,28,0.98) 68%)",
+                      boxShadow:
+                        "inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 36px rgba(111,124,255,0.12), 0 10px 24px rgba(0,0,0,0.26)",
+                    }}
+                  />
+                  <div
+                    className="dispatch-voice-pulse"
+                    style={{
+                      position: "absolute",
+                      inset: 54,
+                      borderRadius: "50%",
+                      background:
+                        "radial-gradient(circle, rgba(111,124,255,0.22), rgba(111,124,255,0.04) 58%, transparent 72%)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      animation: "dispatchVoicePulse 2.8s ease-in-out infinite",
                     }}
                   >
                     <div
-                      className="dispatch-voice-ring"
+                      className="dispatch-voice-mic"
                       style={{
-                        position: "absolute",
-                        inset: 0,
+                        width: 104,
+                        height: 104,
                         borderRadius: "50%",
                         background:
-                          "conic-gradient(from 0deg, #59c3ff, #6f7cff, #9b6bff, #ff5d8f, #ffb86b, #67f0d2, #59c3ff)",
-                        animation: "dispatchVoiceSpin 8s linear infinite",
-                        WebkitMask:
-                          "radial-gradient(farthest-side, transparent calc(100% - 18px), #000 calc(100% - 17px))",
-                        mask:
-                          "radial-gradient(farthest-side, transparent calc(100% - 18px), #000 calc(100% - 17px))",
-                        boxShadow:
-                          "0 0 18px rgba(89,195,255,0.18), 0 0 44px rgba(155,107,255,0.14)",
-                      }}
-                    />
-                    <div
-                      className="dispatch-voice-ring-outline"
-                      style={{
-                        position: "absolute",
-                        inset: 6,
-                        borderRadius: "50%",
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        opacity: 0.45,
-                        pointerEvents: "none",
-                      }}
-                    />
-                    <div
-                      className="dispatch-voice-core"
-                      style={{
-                        position: "absolute",
-                        inset: 19,
-                        borderRadius: "50%",
-                        background:
-                          "radial-gradient(circle at 50% 24%, rgba(31,41,68,0.92), rgba(10,15,28,0.98) 68%)",
-                        boxShadow:
-                          "inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 36px rgba(111,124,255,0.12), 0 10px 24px rgba(0,0,0,0.26)",
-                      }}
-                    />
-                    <div
-                      className="dispatch-voice-pulse"
-                      style={{
-                        position: "absolute",
-                        inset: 54,
-                        borderRadius: "50%",
-                        background:
-                          "radial-gradient(circle, rgba(111,124,255,0.22), rgba(111,124,255,0.04) 58%, transparent 72%)",
+                          "linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04))",
+                        border: "1px solid rgba(255,255,255,0.14)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        animation: "dispatchVoicePulse 2.8s ease-in-out infinite",
+                        boxShadow:
+                          "0 18px 34px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -12px 24px rgba(0,0,0,0.12)",
+                        backdropFilter: "blur(10px)",
+                        WebkitBackdropFilter: "blur(10px)",
                       }}
                     >
-                      <div
-                        className="dispatch-voice-mic"
-                        style={{
-                          width: 104,
-                          height: 104,
-                          borderRadius: "50%",
-                          background:
-                            "linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04))",
-                          border: "1px solid rgba(255,255,255,0.14)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          boxShadow:
-                            "0 18px 34px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -12px 24px rgba(0,0,0,0.12)",
-                          backdropFilter: "blur(10px)",
-                          WebkitBackdropFilter: "blur(10px)",
-                        }}
-                      >
-                        <span className="dispatch-voice-mic-icon" style={{ fontSize: 40, filter: "drop-shadow(0 6px 14px rgba(91,94,244,0.26))" }}>🎤</span>
-                      </div>
+                      <span className="dispatch-voice-mic-icon" style={{ fontSize: 40, filter: "drop-shadow(0 6px 14px rgba(91,94,244,0.26))" }}>🎤</span>
                     </div>
                   </div>
                 </div>
+              </div>
 
-                <div
-                  className="dispatch-voice-right"
+              {/* Meeting Info */}
+              <div style={{ textAlign: "center", marginBottom: 24 }}>
+                <div className="dispatch-voice-title" style={{ fontSize: 28, fontWeight: 700, color: "#ffffff", marginBottom: 4 }}>
+                  Dispatch Voice
+                </div>
+                <div style={{ fontSize: 14, color: "rgba(226,232,240,0.84)" }}>
+                  {isVoiceCommandListening ? "🎙️ Listening..." : isSpeaking ? "🔊 Speaking..." : "Ready to assist"}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", justifyContent: "center", width: "100%" }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={isVoiceCommandListening ? stopVoiceCommandListening : startVoiceCommandListening}
+                  disabled={isVoiceCommandLoading || !voiceCommandSupported}
                   style={{
-                    flex: 1,
-                    minWidth: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "center",
-                    minHeight: 0,
+                    background: isVoiceCommandListening
+                      ? "rgba(91, 94, 244, 0.3)"
+                      : "rgba(255,255,255,0.15)",
+                    color: "#ffffff",
+                    border: "1px solid rgba(255,255,255,0.25)",
+                    padding: "12px 24px",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    minWidth: 120,
                   }}
                 >
-                  <div className="dispatch-voice-mode-label" style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.72)" }}>
-                    Dispatch Voice Mode
-                  </div>
-                  <div className="dispatch-voice-title" style={{ fontSize: 30, fontWeight: 700, marginTop: 10, color: "#ffffff", lineHeight: 1.1 }}>
-                    Reading your daily brief
-                  </div>
-                  <div className="dispatch-voice-subtitle" style={{ fontSize: 14, lineHeight: 1.6, marginTop: 8, color: "rgba(226,232,240,0.84)", maxWidth: 420 }}>
-                    Dispatch is reading today's priorities and meetings using your selected voice.
-                  </div>
+                  {isVoiceCommandLoading
+                    ? "Thinking..."
+                    : isVoiceCommandListening
+                      ? "Stop"
+                      : "Ask Dispatch"}
+                </button>
 
-                  <div className="dispatch-voice-command-row" style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={isVoiceCommandListening ? stopVoiceCommandListening : startVoiceCommandListening}
-                      disabled={isVoiceCommandLoading || !voiceCommandSupported}
-                      style={{
-                        background: isVoiceCommandListening
-                          ? "rgba(91, 94, 244, 0.2)"
-                          : "rgba(255,255,255,0.1)",
-                        color: "#ffffff",
-                        border: "1px solid rgba(255,255,255,0.18)",
-                        padding: "10px 18px",
-                      }}
-                    >
-                      {isVoiceCommandLoading
-                        ? "Thinking..."
-                        : isVoiceCommandListening
-                          ? "Stop Listening"
-                          : "Ask Dispatch"}
-                    </button>
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: isVoiceCommandListening ? "rgba(111,124,255,1)" : "rgba(186,196,255,0.8)" }}>
-                      {isVoiceCommandLoading
-                        ? "Processing"
-                        : isVoiceCommandListening
-                          ? "Listening"
-                          : formatVoiceIntentLabel(voiceCommandResponse?.intent)}
+                <button
+                  type="button"
+                  onClick={togglePauseVoiceMode}
+                  className="btn"
+                  style={{
+                    background: "rgba(255,255,255,0.1)",
+                    color: "#ffffff",
+                    border: "1px solid rgba(255,255,255,0.18)",
+                    padding: "12px 24px",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  {!isSpeaking && !isPaused ? "Play" : isSpeaking ? "Pause" : "Resume"}
+                </button>
+              </div>
+
+              {/* Response Box */}
+              <div
+                style={{
+                  width: "100%",
+                  padding: "16px",
+                  borderRadius: 18,
+                  background: "rgba(111,124,255,0.08)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+                  maxHeight: "300px",
+                  overflowY: "auto",
+                  overflowX: "hidden",
+                  scrollbarWidth: "none",
+                  msOverflowStyle: "none",
+                }}
+              >
+                {voiceCommandTranscript && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(186,196,255,0.88)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                      Heard
+                    </div>
+                    <div style={{ fontSize: 13, color: "#ffffff", lineHeight: 1.5, wordBreak: "break-word", overflowWrap: "break-word" }}>
+                      {normalizeTranscriptDisplay(voiceCommandTranscript)}
                     </div>
                   </div>
+                )}
 
-                  <div
-                    className="dispatch-voice-lines"
-                    ref={spokenLinesRef}
-                    style={{
-                      marginTop: 24,
-                      width: "100%",
-                      padding: "14px 16px",
-                      borderRadius: 18,
-                      background: "rgba(255,255,255,0.08)",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      minHeight: 120,
-                      maxHeight: "28vh",
-                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                      overflowY: "auto",
-                      overflowX: "hidden",
-                      scrollbarWidth: "none",
-                      msOverflowStyle: "none",
-                    }}
-                  >
-                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(186,196,255,0.88)" }}>
-                      Now speaking
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 8,
-                        fontSize: 16,
-                        lineHeight: 1.6,
-                        color: "#ffffff",
-                        whiteSpace: "normal",
-                        wordBreak: "break-word",
-                        overflowWrap: "anywhere",
-                      }}
-                    >
-                      {spokenText.length > 0 ? (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                          {spokenText.map((line, index) => (
-                            <div key={`spoken-line-${index}`} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                              <span style={{ color: "rgba(186,196,255,0.88)", flexShrink: 0 }}>•</span>
-                              <span>{line}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : "Preparing your daily brief..."}
-                    </div>
-                  </div>
-
-                  <div
-                    className="dispatch-voice-response"
-                    style={{
-                      marginTop: 14,
-                      width: "100%",
-                      padding: "14px 16px",
-                      borderRadius: 18,
-                      background: "rgba(111,124,255,0.08)",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                    }}
-                  >
-                    {voiceCommandTranscript && (
-                      <div style={{ marginBottom: 10 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(186,196,255,0.88)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                          Heard
-                        </div>
-                        <div style={{ marginTop: 6, fontSize: 14, color: "#ffffff", lineHeight: 1.5 }}>
-                          {voiceCommandTranscript}
-                        </div>
-                      </div>
-                    )}
-
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(186,196,255,0.88)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                      Ask Dispatch
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 14, color: "#ffffff", lineHeight: 1.6 }}>
-                      {isVoiceCommandListening
-                        ? "Listening for your command..."
-                        : isVoiceCommandLoading
-                          ? "Checking Microsoft Graph and preparing an answer..."
-                          : voiceCommandResponse?.answer || "Ask about your meetings, open tasks, or say add task followed by the task title."}
-                    </div>
-                  </div>
-
-                  <div className="dispatch-voice-actions" style={{ marginTop: 22, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      onClick={stopVoiceMode}
-                      className="btn"
-                      style={{
-                        background: "rgba(255,255,255,0.08)",
-                        color: "#ffffff",
-                        border: "1px solid rgba(255,255,255,0.18)",
-                        padding: "10px 18px",
-                      }}
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={togglePauseVoiceMode}
-                      className="btn"
-                      style={{
-                        background: "rgba(255,255,255,0.14)",
-                        color: "#ffffff",
-                        border: "1px solid rgba(255,255,255,0.22)",
-                        padding: "10px 18px",
-                      }}
-                    >
-                      {isPaused ? "Play" : isSpeaking ? "Pause" : "Play"}
-                    </button>
-                  </div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(186,196,255,0.88)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+                  Response
+                </div>
+                <div style={{ fontSize: 13, color: "#ffffff", lineHeight: 1.6, wordBreak: "break-word", overflowWrap: "break-word", whiteSpace: "pre-wrap" }}>
+                  {isVoiceCommandListening
+                    ? "Listening for your command..."
+                    : isVoiceCommandLoading
+                      ? "Checking Microsoft Graph and preparing an answer..."
+                      : voiceCommandResponse?.answer || "Ask about your meetings, open tasks, or say add task followed by the task title."}
                 </div>
               </div>
             </div>
@@ -1016,6 +1015,22 @@ export default function DailyTodos() {
         .dispatch-voice-lines::-webkit-scrollbar {
           width: 0;
           height: 0;
+        }
+
+        .btn-close-voice {
+          position: relative;
+          transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .btn-close-voice:hover {
+          background: rgba(255, 255, 255, 0.12) !important;
+          color: #ffffff !important;
+          transform: scale(1.1);
+          box-shadow: 0 4px 16px rgba(111, 124, 255, 0.2);
+        }
+
+        .btn-close-voice:active {
+          transform: scale(0.95);
         }
 
         @keyframes dispatchVoiceSpin {
